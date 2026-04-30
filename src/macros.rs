@@ -59,12 +59,12 @@ macro_rules! api_routes {
     };
 
     // ---------------------------------------------------------------------------
-    // Route matchers — specific arms first, general arm last.
+    // Route matchers — one arm for each combination of generic/plain types.
     // We need separate arms because macro_rules can't use `ty` followed by
     // keywords like `query` or `->`.
     // ---------------------------------------------------------------------------
 
-    // WS route with send:/receive: event types — matched before the general arm.
+    // WS route with send:/receive: event types.
     // Syntax: send: SendType, receive: ReceiveType (comma-separated, required)
     (@collect $collection:ident, @group_ctx $group:expr,
         $name:ident : $method:ident $path:literal
@@ -92,7 +92,7 @@ macro_rules! api_routes {
         $crate::api_routes!(@collect $collection, @group_ctx $group, $($rest)*);
     };
 
-    // General route matcher — body, query, response types (non-WS)
+    // General route matcher — body, query, response types
     (@collect $collection:ident, @group_ctx $group:expr,
         $name:ident : $method:ident $path:literal
         $([$($flag:ident),*])?
