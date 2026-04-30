@@ -55,6 +55,12 @@ pub struct RouteDefinition {
     pub group: Option<String>,
     /// Whether this route is a browser redirect (not a fetch call).
     pub redirect: bool,
+    /// Whether this route is a WebSocket endpoint (generates WS connection, not fetch).
+    pub websocket: bool,
+    /// Rust type name for client-to-server events (send direction).
+    pub ws_send_type: Option<String>,
+    /// Rust type name for server-to-client events (receive direction).
+    pub ws_receive_type: Option<String>,
 }
 
 /// A collection of route definitions.
@@ -165,6 +171,9 @@ mod tests {
             path_params: vec![],
             group: None,
             redirect: false,
+            websocket: false,
+            ws_send_type: None,
+            ws_receive_type: None,
         });
 
         let mut b = RouteCollection::new();
@@ -179,6 +188,9 @@ mod tests {
             path_params: vec![],
             group: Some("baz".into()),
             redirect: false,
+            websocket: false,
+            ws_send_type: None,
+            ws_receive_type: None,
         });
 
         a.extend(b);

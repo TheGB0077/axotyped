@@ -17,6 +17,7 @@ fn simple_get_route() {
     assert!(r.query_type.is_none());
     assert!(r.group.is_none());
     assert!(!r.redirect);
+    assert!(!r.websocket);
 }
 
 #[test]
@@ -84,6 +85,38 @@ fn redirect_route() {
     assert_eq!(r.path_params[0].name, "provider");
     assert_eq!(r.query_type.as_deref(), Some("AuthorizeQuery"));
     assert!(r.response_type.is_none());
+}
+
+#[test]
+fn websocket_route() {
+    let routes = api_routes! {
+        wsUpgrade: GET "/ws" [ws]
+            send: ClientEvent, receive: ServerEvent
+            query: WsParams;
+    };
+    let r = &routes.routes()[0];
+    assert!(r.websocket);
+    assert!(!r.redirect);
+    assert!(!r.auth);
+    assert_eq!(r.query_type.as_deref(), Some("WsParams"));
+    assert_eq!(r.ws_send_type.as_deref(), Some("ClientEvent"));
+    assert_eq!(r.ws_receive_type.as_deref(), Some("ServerEvent"));
+    assert!(r.response_type.is_none());
+}
+
+#[test]
+fn websocket_with_auth() {
+    let routes = api_routes! {
+        wsConnect: GET "/ws/{sessionId}" [auth, ws]
+            send: ClientEvent, receive: ServerEvent
+            query: WsParams;
+    };
+    let r = &routes.routes()[0];
+    assert!(r.websocket);
+    assert!(r.auth);
+    assert_eq!(r.path_params[0].name, "sessionId");
+    assert_eq!(r.ws_send_type.as_deref(), Some("ClientEvent"));
+    assert_eq!(r.ws_receive_type.as_deref(), Some("ServerEvent"));
 }
 
 #[test]

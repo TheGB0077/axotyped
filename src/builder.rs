@@ -24,6 +24,10 @@
 //!     .get("/users/{id}", get_user)
 //!         .response::<UserResponse>()
 //!         .as_("getById")  // override auto-name when needed
+//!     .ws("/ws", ws_upgrade)           // dedicated WS builder
+//!         .query::<WsParams>()
+//!         .events::<ClientEvent, ServerEvent>()
+//!         .done()
 //!     .build();
 //! ```
 
@@ -218,6 +222,36 @@ where
         self.route(path, HttpMethod::Delete, routing::delete(handler), name)
     }
 
+    /// Add a WebSocket route.
+    ///
+    /// Returns a [`WsRouteBuilder`] that only exposes WS-relevant methods
+    /// (`.query()`, `.events()`, `.auth()`, `.done()`). Internally uses
+    /// `routing::get()` since WebSocket upgrades start as HTTP GET requests.
+    pub fn ws<H, T>(mut self, path: &str, handler: H) -> WsRouteBuilder<S>
+    where
+        H: Handler<T, S> + 'static,
+        T: 'static,
+    {
+        let name = default_name_from_handler::<H>();
+        self.router = self.router.route(path, routing::get(handler));
+        let def = RouteDefinition {
+            name,
+            method: HttpMethod::Get,
+            path: path.to_string(),
+            auth: false,
+            body_type: None,
+            response_type: None,
+            query_type: None,
+            path_params: crate::extract_path_params(path),
+            group: self.current_group.clone(),
+            redirect: false,
+            websocket: true,
+            ws_send_type: None,
+            ws_receive_type: None,
+        };
+        WsRouteBuilder { parent: self, def }
+    }
+
     fn route(
         mut self,
         path: &str,
@@ -237,6 +271,9 @@ where
             path_params: crate::extract_path_params(path),
             group: self.current_group.clone(),
             redirect: false,
+            websocket: false,
+            ws_send_type: None,
+            ws_receive_type: None,
         };
         RouteBuilder { parent: self, def }
     }
@@ -316,6 +353,71 @@ where
     /// Finalize the route using the auto-derived name (handler function name → camelCase).
     pub fn done(mut self) -> ApiRouter<S> {
         // name was already set from the handler in ApiRouter::route()
+        self.parent.routes.push(self.def);
+        self.parent
+    }
+
+    /// Finalize the route with an explicit client method name, overriding the auto-derived name.
+    pub fn as_(mut self, name: &str) -> ApiRouter<S> {
+        self.def.name = name.to_string();
+        self.parent.routes.push(self.def);
+        self.parent
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WsRouteBuilder
+// ---------------------------------------------------------------------------
+
+/// Constrained builder for WebSocket routes.
+///
+/// Only exposes methods relevant to WebSocket endpoints:
+/// - `.query::<T>()` — query parameters (e.g., auth token)
+/// - `.events::<S, R>()` — client-to-server (`S`) and server-to-client (`R`) event types
+/// - `.auth()` — mark as requiring authentication
+/// - `.done()` / `.as_("name")` — finalize
+///
+/// Methods that don't make sense for WS (`.body()`, `.response()`, `.json()`,
+/// `.redirect()`) are not available.
+pub struct WsRouteBuilder<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    parent: ApiRouter<S>,
+    def: RouteDefinition,
+}
+
+impl<S> WsRouteBuilder<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    /// Set the query parameters type.
+    pub fn query<T: 'static>(mut self) -> Self {
+        self.def.query_type = Some(type_string::<T>());
+        self
+    }
+
+    /// Set the event types for this WebSocket endpoint.
+    ///
+    /// - `S`: client-to-server event type (what the TS client sends)
+    /// - `R`: server-to-client event type (what the TS client receives)
+    ///
+    /// Generates a TypeScript `TypedWebSocket<S, R>` wrapper with typed
+    /// `send(event: S)` and `onMessage(handler: (event: R) => void)` methods.
+    pub fn events<Send: 'static, Receive: 'static>(mut self) -> Self {
+        self.def.ws_send_type = Some(type_string::<Send>());
+        self.def.ws_receive_type = Some(type_string::<Receive>());
+        self
+    }
+
+    /// Mark this route as requiring authentication.
+    pub fn auth(mut self) -> Self {
+        self.def.auth = true;
+        self
+    }
+
+    /// Finalize the route using the auto-derived name (handler function name → camelCase).
+    pub fn done(mut self) -> ApiRouter<S> {
         self.parent.routes.push(self.def);
         self.parent
     }

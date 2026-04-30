@@ -61,6 +61,15 @@ fn sample_routes() -> axfetchum::RouteCollection {
     };
     routes.extend(oauth);
 
+    let ws = api_routes! {
+        @group realtime
+
+        wsUpgrade: GET "/ws" [ws]
+            send: ClientEvent, receive: ServerEvent
+            query: WsParams;
+    };
+    routes.extend(ws);
+
     routes
 }
 
@@ -375,4 +384,128 @@ fn format_command_none_preserves_existing_behavior() {
     assert!(result.is_ok());
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket generation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn generates_websocket_route() {
+    let routes = sample_routes();
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // Should have the realtime group
+    assert!(output.contains("realtime: {"));
+
+    // Should have TypedWebSocket interface and helper
+    assert!(output.contains("export interface TypedWebSocket<TSend, TReceive>"));
+    assert!(output.contains("function createTypedWebSocket<TSend, TReceive>"));
+
+    // Should convert http to ws
+    assert!(output.contains("options.baseUrl.replace(/^http/"));
+
+    // Should NOT use request<...> for WS routes
+    let ws_section = output
+        .split("wsUpgrade:")
+        .nth(1)
+        .unwrap()
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(!ws_section.contains("request<"));
+}
+
+#[test]
+fn generates_websocket_with_query() {
+    let routes = sample_routes();
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // Should have query param handling for WS
+    assert!(output.contains("WsParams"));
+
+    // The WS method should accept query param
+    assert!(output.contains("wsUpgrade: (query?: WsParams)"));
+
+    // Should have typed return with ClientEvent and ServerEvent
+    assert!(output.contains("TypedWebSocket<ClientEvent, ServerEvent>"));
+}
+
+#[test]
+fn generates_websocket_no_query() {
+    let routes = api_routes! {
+        wsConnect: GET "/ws" [ws]
+            send: ClientEvent, receive: ServerEvent;
+    };
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // Should still generate typed WS
+    assert!(output.contains("TypedWebSocket<ClientEvent, ServerEvent>"));
+
+    // No query param handling in the WS method itself
+    let ws_section = output
+        .split("wsConnect:")
+        .nth(1)
+        .unwrap()
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(!ws_section.contains("URLSearchParams"));
+}
+
+#[test]
+fn generates_websocket_with_path_params() {
+    let routes = api_routes! {
+        sessionWs: GET "/ws/{sessionId}" [ws]
+            send: ClientEvent, receive: ServerEvent
+            query: WsParams;
+    };
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // Should have path param as function arg
+    assert!(output.contains("sessionWs: (sessionId: string, query?: WsParams)"));
+
+    // Should use template literal for path
+    assert!(output.contains("${sessionId}"));
+
+    // Should return typed WS
+    assert!(output.contains("TypedWebSocket<ClientEvent, ServerEvent>"));
+}
+
+#[test]
+fn generates_websocket_imports_event_types() {
+    let routes = api_routes! {
+        wsUpgrade: GET "/ws" [ws]
+            send: ClientEvent, receive: ServerEvent
+            query: WsParams;
+    };
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // Should import the event types
+    assert!(output.contains("import type { ClientEvent }"));
+    assert!(output.contains("import type { ServerEvent }"));
+    assert!(output.contains("import type { WsParams }"));
+}
+
+#[test]
+fn generates_websocket_typed_send_and_receive() {
+    let routes = api_routes! {
+        wsUpgrade: GET "/ws" [ws]
+            send: ClientEvent, receive: ServerEvent;
+    };
+    let config = yauth_config();
+    let output = generate(&routes, &config);
+
+    // TypedWebSocket interface should have send and onMessage
+    assert!(output.contains("send(event: TSend): void"));
+    assert!(output.contains("onMessage(handler: (event: TReceive) => void): void"));
+
+    // createTypedWebSocket should use JSON.stringify/parse
+    assert!(output.contains("JSON.stringify(event)"));
+    assert!(output.contains("JSON.parse(raw.data"));
 }

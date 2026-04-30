@@ -5,6 +5,7 @@ import type { AuthorizeQuery } from "../../../../bindings/AuthorizeQuery";
 import type { BanRequest } from "../../../../bindings/BanRequest";
 import type { CallbackBody } from "../../../../bindings/CallbackBody";
 import type { ChangePasswordRequest } from "../../../../bindings/ChangePasswordRequest";
+import type { ClientEvent } from "../../../../bindings/ClientEvent";
 import type { ListUsersQuery } from "../../../../bindings/ListUsersQuery";
 import type { ListUsersResponse } from "../../../../bindings/ListUsersResponse";
 import type { LoginRequest } from "../../../../bindings/LoginRequest";
@@ -12,11 +13,13 @@ import type { LoginResponse } from "../../../../bindings/LoginResponse";
 import type { MessageResponse } from "../../../../bindings/MessageResponse";
 import type { ProfileResponse } from "../../../../bindings/ProfileResponse";
 import type { RegisterRequest } from "../../../../bindings/RegisterRequest";
+import type { ServerEvent } from "../../../../bindings/ServerEvent";
 import type { SessionResponse } from "../../../../bindings/SessionResponse";
 import type { SuccessResponse } from "../../../../bindings/SuccessResponse";
 import type { UpdateProfileRequest } from "../../../../bindings/UpdateProfileRequest";
 import type { UserResponse } from "../../../../bindings/UserResponse";
 import type { VerifyEmailRequest } from "../../../../bindings/VerifyEmailRequest";
+import type { WsParams } from "../../../../bindings/WsParams";
 
 export class YAuthError extends Error {
   constructor(message: string, public status: number, public body?: unknown) {
@@ -101,6 +104,32 @@ function createRequest(options: YAuthClientOptions) {
   return request;
 }
 
+export interface TypedWebSocket<TSend, TReceive> {
+  send(event: TSend): void;
+  onOpen(handler: () => void): void;
+  onMessage(handler: (event: TReceive) => void): void;
+  onError(handler: (event: Event) => void): void;
+  onClose(handler: (event: CloseEvent) => void): void;
+  close(code?: number, reason?: string): void;
+  readonly readyState: number;
+}
+
+function createTypedWebSocket<TSend, TReceive>(ws: WebSocket): TypedWebSocket<TSend, TReceive> {
+  return {
+    send(event: TSend) { ws.send(JSON.stringify(event)); },
+    onOpen(handler: () => void) { ws.addEventListener("open", handler); },
+    onMessage(handler: (event: TReceive) => void) {
+      ws.addEventListener("message", (raw: MessageEvent) => {
+        handler(JSON.parse(raw.data as string) as TReceive);
+      });
+    },
+    onError(handler: (event: Event) => void) { ws.addEventListener("error", handler); },
+    onClose(handler: (event: CloseEvent) => void) { ws.addEventListener("close", handler); },
+    close(code?: number, reason?: string) { ws.close(code, reason); },
+    get readyState() { return ws.readyState; },
+  };
+}
+
 export function createYAuthClient(options: YAuthClientOptions) {
   const request = createRequest(options);
 
@@ -147,6 +176,23 @@ export function createYAuthClient(options: YAuthClientOptions) {
       },
       callback: (provider: string, body: CallbackBody) =>
         request<AuthResponse>(`/oauth/${provider}/callback`, { method: "POST", body }),
+    },
+
+    realtime: {
+      wsUpgrade: (query?: WsParams): TypedWebSocket<ClientEvent, ServerEvent> => {
+        const baseUrl = options.baseUrl.replace(/^http/, (m) => m === "https" ? "wss" : "ws");
+        let url = `${baseUrl}/ws`;
+        if (query) {
+          const params = new URLSearchParams();
+          for (const [key, value] of Object.entries(query)) {
+            if (value !== undefined && value !== null) params.set(key, String(value));
+          }
+          const qs = params.toString();
+          if (qs) url += `?${qs}`;
+        }
+        const ws = new WebSocket(url);
+        return createTypedWebSocket<ClientEvent, ServerEvent>(ws);
+      },
     },
   };
 }

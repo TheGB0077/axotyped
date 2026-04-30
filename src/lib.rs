@@ -45,4 +45,4 @@ pub use generator::{CheckError, GeneratorConfig, check, generate, generate_to_fi
 pub use types::{HttpMethod, PathParam, RouteCollection, RouteDefinition, extract_path_params};
 
 #[cfg(feature = "axum")]
-pub use builder::{ApiRouter, RouteBuilder};
+pub use builder::{ApiRouter, RouteBuilder, WsRouteBuilder};

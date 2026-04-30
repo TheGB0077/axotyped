@@ -251,6 +251,124 @@ fn builder_redirect() {
 }
 
 // ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+
+#[test]
+fn builder_websocket_typed() {
+    #[derive(Deserialize)]
+    struct WsParams {
+        _token: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ClientEvent {
+        _msg: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ServerEvent {
+        _reply: String,
+    }
+
+    async fn ws_upgrade(State(_s): State<AppState>) {}
+
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .ws("/ws", ws_upgrade)
+        .query::<WsParams>()
+        .events::<ClientEvent, ServerEvent>()
+        .done()
+        .build();
+
+    let r = &routes.routes()[0];
+    assert!(r.websocket);
+    assert!(!r.redirect);
+    assert!(!r.auth);
+    assert!(r.query_type.as_ref().unwrap().contains("WsParams"));
+    assert!(r.ws_send_type.as_ref().unwrap().contains("ClientEvent"));
+    assert!(r.ws_receive_type.as_ref().unwrap().contains("ServerEvent"));
+    assert_eq!(r.name, "wsUpgrade");
+}
+
+#[test]
+fn builder_websocket_with_path_params() {
+    #[derive(serde::Serialize)]
+    struct ClientEvent {
+        _msg: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ServerEvent {
+        _reply: String,
+    }
+
+    async fn session_ws(State(_s): State<AppState>, Path(_id): Path<String>) {}
+
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .ws("/ws/{sessionId}", session_ws)
+        .events::<ClientEvent, ServerEvent>()
+        .done()
+        .build();
+
+    let r = &routes.routes()[0];
+    assert!(r.websocket);
+    assert_eq!(r.path_params[0].name, "sessionId");
+    assert!(r.ws_send_type.as_ref().unwrap().contains("ClientEvent"));
+    assert!(r.ws_receive_type.as_ref().unwrap().contains("ServerEvent"));
+    assert_eq!(r.name, "sessionWs");
+}
+
+#[test]
+fn builder_websocket_with_auth() {
+    #[derive(serde::Serialize)]
+    struct ClientEvent {
+        _msg: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ServerEvent {
+        _reply: String,
+    }
+
+    async fn ws_upgrade(State(_s): State<AppState>) {}
+
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .ws("/ws", ws_upgrade)
+        .events::<ClientEvent, ServerEvent>()
+        .auth()
+        .done()
+        .build();
+
+    let r = &routes.routes()[0];
+    assert!(r.websocket);
+    assert!(r.auth);
+}
+
+#[test]
+fn builder_websocket_custom_name() {
+    #[derive(serde::Serialize)]
+    struct ClientEvent {
+        _msg: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ServerEvent {
+        _reply: String,
+    }
+
+    async fn ws_handler(State(_s): State<AppState>) {}
+
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .ws("/ws", ws_handler)
+        .events::<ClientEvent, ServerEvent>()
+        .as_("connect")
+        .build();
+
+    let r = &routes.routes()[0];
+    assert_eq!(r.name, "connect");
+}
+
+// ---------------------------------------------------------------------------
 // End-to-end: generates valid TypeScript
 // ---------------------------------------------------------------------------
 
