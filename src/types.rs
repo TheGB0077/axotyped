@@ -63,15 +63,102 @@ pub struct RouteDefinition {
     pub ws_receive_type: Option<String>,
 }
 
-/// A collection of route definitions.
+// ---------------------------------------------------------------------------
+// Type collection (ts-rs feature)
+// ---------------------------------------------------------------------------
+
+/// A type-erased `T::export_all(&cfg)` function pointer.
+/// Used to call ts-rs's export mechanism for types discovered during route building.
+#[cfg(feature = "ts-rs")]
+type ExportFn = fn(&ts_rs::Config) -> Result<(), ts_rs::ExportError>;
+
+/// Collects types encountered during route building so their TypeScript
+/// declarations can be exported via ts-rs's `export_all()` mechanism.
+/// Deduplicates by `TypeId` to handle generic instantiations correctly
+/// (e.g., `ContentResponse<VocabItem>` and `ContentResponse<Dialog>` share
+/// the same generic `TS` impl and produce the same declaration).
+#[cfg(feature = "ts-rs")]
+#[derive(Debug, Clone, Default)]
+pub struct TypeRegistry {
+    /// TypeId → export_all function pointer, for deduplication and export.
+    slots: Vec<(std::any::TypeId, ExportFn)>,
+    seen: std::collections::BTreeSet<std::any::TypeId>,
+}
+
+#[cfg(feature = "ts-rs")]
+impl TypeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a type's export function. Deduplicates by `TypeId`.
+    pub fn register<T: ts_rs::TS + 'static>(&mut self) {
+        let type_id = std::any::TypeId::of::<T>();
+        if self.seen.insert(type_id) {
+            self.slots.push((type_id, T::export_all));
+        }
+    }
+
+    /// Whether a type has already been registered.
+    pub fn contains_type<T: 'static>(&self) -> bool {
+        self.seen.contains(&std::any::TypeId::of::<T>())
+    }
+
+    /// All registered export function pointers.
+    pub fn slots(&self) -> &[(std::any::TypeId, ExportFn)] {
+        &self.slots
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Merge another registry into this one. Duplicates are skipped.
+    pub fn extend(&mut self, other: TypeRegistry) {
+        for (type_id, export_fn) in other.slots {
+            if self.seen.insert(type_id) {
+                self.slots.push((type_id, export_fn));
+            }
+        }
+    }
+}
+
+/// Placeholder registry when ts-rs is not enabled — no type collection.
+#[cfg(not(feature = "ts-rs"))]
+#[derive(Debug, Clone, Default)]
+pub struct TypeRegistry;
+
+#[cfg(not(feature = "ts-rs"))]
+impl TypeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+
+    pub fn len(&self) -> usize {
+        0
+    }
+
+    pub fn extend(&mut self, _other: TypeRegistry) {}
+}
+
+/// A collection of route definitions and their associated TypeScript types.
 #[derive(Debug, Clone, Default)]
 pub struct RouteCollection {
     routes: Vec<RouteDefinition>,
+    types: TypeRegistry,
 }
 
 impl RouteCollection {
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
+        Self::default()
     }
 
     pub fn push(&mut self, route: RouteDefinition) {
@@ -80,10 +167,51 @@ impl RouteCollection {
 
     pub fn extend(&mut self, other: RouteCollection) {
         self.routes.extend(other.routes);
+        self.types.extend(other.types);
     }
 
     pub fn routes(&self) -> &[RouteDefinition] {
         &self.routes
+    }
+
+    pub fn types(&self) -> &TypeRegistry {
+        &self.types
+    }
+
+    /// Register a type for TypeScript export. Deduplicates by TypeId.
+    #[cfg(feature = "ts-rs")]
+    pub fn register_type<T: ts_rs::TS + 'static>(&mut self) {
+        self.types.register::<T>();
+    }
+
+    /// Export all collected types (and their transitive dependencies) to the
+    /// given directory using ts-rs's `export_all()` mechanism.
+    ///
+    /// Call this before `generate_to_file()` — the generated client will
+    /// import types from this directory.
+    ///
+    /// This replaces manual `T::export_all(&cfg)` calls for each type.
+    /// Types are auto-discovered from the builder's `.response::<T>()`,
+    /// `.body::<T>()`, `.query::<T>()`, and `.events::<A, B>()` calls.
+    #[cfg(feature = "ts-rs")]
+    pub fn export_types(&self, dir: &std::path::Path) -> Result<(), std::io::Error> {
+        use std::fs;
+
+        if self.types.is_empty() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(dir)?;
+        let cfg = ts_rs::Config::new().with_out_dir(dir.to_path_buf());
+
+        for (_, export_fn) in self.types.slots() {
+            if let Err(e) = export_fn(&cfg) {
+                // Log but don't fail — one bad type shouldn't block generation
+                eprintln!("axfetchum: type export failed: {e}");
+            }
+        }
+
+        Ok(())
     }
 
     pub fn len(&self) -> usize {

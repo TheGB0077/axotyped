@@ -38,6 +38,34 @@ use axum::routing::{self, MethodRouter};
 use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
 
 // ---------------------------------------------------------------------------
+// Type collection helper
+// ---------------------------------------------------------------------------
+
+/// Trait bound for types that can be collected into the TypeRegistry.
+/// When `ts-rs` feature is enabled, this requires `ts_rs::TS`.
+/// When disabled, only requires `'static` (collection is a no-op).
+#[cfg(feature = "ts-rs")]
+pub trait MaybeTs: ts_rs::TS {}
+
+#[cfg(feature = "ts-rs")]
+impl<T: ts_rs::TS> MaybeTs for T {}
+
+#[cfg(not(feature = "ts-rs"))]
+pub trait MaybeTs: 'static {}
+
+#[cfg(not(feature = "ts-rs"))]
+impl<T: 'static> MaybeTs for T {}
+
+/// Register a type for TypeScript export. Deduplicates by TypeId.
+/// When the `ts-rs` feature is disabled, this is a no-op.
+fn collect_type<T: MaybeTs + 'static>(collection: &mut RouteCollection) {
+    #[cfg(feature = "ts-rs")]
+    collection.register_type::<T>();
+    #[cfg(not(feature = "ts-rs"))]
+    let _ = collection;
+}
+
+// ---------------------------------------------------------------------------
 // String helpers
 // ---------------------------------------------------------------------------
 
@@ -307,20 +335,23 @@ where
     S: Clone + Send + Sync + 'static,
 {
     /// Set the request body type.
-    pub fn body<T: 'static>(mut self) -> Self {
+    pub fn body<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.body_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
     /// Set the response type.
-    pub fn response<T: 'static>(mut self) -> Self {
+    pub fn response<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.response_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
     /// Set the query parameters type.
-    pub fn query<T: 'static>(mut self) -> Self {
+    pub fn query<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.query_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
@@ -332,9 +363,11 @@ where
     ///     .auth()
     ///     .done()
     /// ```
-    pub fn json<B: 'static, R: 'static>(mut self) -> Self {
+    pub fn json<B: MaybeTs + 'static, R: MaybeTs + 'static>(mut self) -> Self {
         self.def.body_type = Some(type_string::<B>());
         self.def.response_type = Some(type_string::<R>());
+        collect_type::<B>(&mut self.parent.routes);
+        collect_type::<R>(&mut self.parent.routes);
         self
     }
 
@@ -392,8 +425,9 @@ where
     S: Clone + Send + Sync + 'static,
 {
     /// Set the query parameters type.
-    pub fn query<T: 'static>(mut self) -> Self {
+    pub fn query<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.query_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
@@ -404,9 +438,11 @@ where
     ///
     /// Generates a TypeScript `TypedWebSocket<S, R>` wrapper with typed
     /// `send(event: S)` and `onMessage(handler: (event: R) => void)` methods.
-    pub fn events<Send: 'static, Receive: 'static>(mut self) -> Self {
+    pub fn events<Send: MaybeTs + 'static, Receive: MaybeTs + 'static>(mut self) -> Self {
         self.def.ws_send_type = Some(type_string::<Send>());
         self.def.ws_receive_type = Some(type_string::<Receive>());
+        collect_type::<Send>(&mut self.parent.routes);
+        collect_type::<Receive>(&mut self.parent.routes);
         self
     }
 

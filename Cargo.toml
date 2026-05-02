@@ -12,9 +12,11 @@ publish = true
 [features]
 default = []
 axum = ["dep:axum"]
+ts-rs = ["dep:ts-rs"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
+ts-rs = { version = "12", optional = true, features = ["serde-json-impl"] }
 
 [dev-dependencies]
 axum = "0.8"
