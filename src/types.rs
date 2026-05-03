@@ -85,6 +85,14 @@ pub struct TypeRegistry {
     seen: std::collections::BTreeSet<std::any::TypeId>,
 }
 
+/// Check if a type name is a stdlib container wrapper that shouldn't be
+/// exported as a standalone ts-rs type (e.g., `alloc::vec::Vec<MyType>`).
+/// The TS generator handles these inline (`T[]`, `T | null`).
+#[cfg(feature = "ts-rs")]
+fn is_container_wrapper(type_name: &str) -> bool {
+    type_name.contains("::vec::Vec<") || type_name.contains("::option::Option<")
+}
+
 #[cfg(feature = "ts-rs")]
 impl TypeRegistry {
     pub fn new() -> Self {
@@ -92,7 +100,15 @@ impl TypeRegistry {
     }
 
     /// Register a type's export function. Deduplicates by `TypeId`.
+    ///
+    /// Skips container wrappers (`Vec<T>`, `Option<T>`) since they can't be
+    /// exported as standalone ts-rs types. The inner `T` is registered
+    /// separately through its own route registration.
     pub fn register<T: ts_rs::TS + 'static>(&mut self) {
+        let type_name = std::any::type_name::<T>();
+        if is_container_wrapper(type_name) {
+            return;
+        }
         let type_id = std::any::TypeId::of::<T>();
         if self.seen.insert(type_id) {
             self.slots.push((type_id, T::export_all));
