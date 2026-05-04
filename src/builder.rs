@@ -159,6 +159,8 @@ where
     router: Router<S>,
     routes: RouteCollection,
     current_group: Option<String>,
+    current_prefix: Option<String>,
+    default_auth: bool,
 }
 
 impl<S> ApiRouter<S>
@@ -171,18 +173,88 @@ where
             router: Router::new(),
             routes: RouteCollection::new(),
             current_group: None,
+            current_prefix: None,
+            default_auth: false,
         }
     }
 
-    /// Set the group for all subsequent routes.
+    /// Set a URL prefix for all subsequent routes.
+    ///
+    /// Paths registered via `.post()`, `.get()`, etc. will have this prefix
+    /// prepended automatically. For example, `.set_prefix("/admin")` followed
+    /// by `.post("/course", ...)` registers `/admin/course`.
+    pub fn set_prefix(mut self, prefix: &str) -> Self {
+        self.current_prefix = Some(prefix.to_string());
+        self
+    }
+
+    /// Make all subsequent routes require authentication by default.
+    ///
+    /// The generated TypeScript client will include `auth: true` for every
+    /// route, causing the `Authorization: Bearer <token>` header to be sent.
+    /// Individual routes can still call `.auth()` (no-op if already set).
+    pub fn auth_all(mut self) -> Self {
+        self.default_auth = true;
+        self
+    }
+
+    /// Set the group for all subsequent routes (TS client namespace only).
+    ///
+    /// For the closure-based version with prefix and auth, see
+    /// [`group_with`](Self::group_with).
     pub fn group(mut self, name: &str) -> Self {
         self.current_group = Some(name.to_string());
         self
     }
 
-    /// Clear the current group.
+    /// Clear group, prefix, and default auth (for fluent `group()` usage).
     pub fn no_group(mut self) -> Self {
         self.current_group = None;
+        self.current_prefix = None;
+        self.default_auth = false;
+        self
+    }
+
+    /// Closure-based group: scoped prefix, auth, and TS namespace.
+    ///
+    /// Creates an isolated scope where all routes inherit the group's
+    /// prefix, auth setting, and TS client namespace. The group's config
+    /// does not leak to routes registered after the closure.
+    ///
+    /// The prefix defaults to `"/{name}"` but can be overridden with
+    /// `.set_prefix()` inside the closure.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// .group_with("admin", |g| {
+    ///     g.auth_all()
+    ///      .post("/course", create_course)
+    ///         .body::<CreateCourseRequest>()
+    ///         .response::<CourseRecord>()
+    ///         .done()
+    ///      .get("/course", list_courses)
+    ///         .response::<Vec<CourseRecord>>()
+    ///         .done()
+    /// })
+    /// ```
+    pub fn group_with<F>(mut self, name: &str, routes: F) -> Self
+    where
+        F: FnOnce(ApiRouter<S>) -> ApiRouter<S>,
+    {
+        let default_prefix = format!("/{}", name);
+        let inner = ApiRouter {
+            router: Router::new(),
+            routes: RouteCollection::new(),
+            current_group: Some(name.to_string()),
+            current_prefix: Some(default_prefix),
+            default_auth: false,
+        };
+
+        let inner = routes(inner);
+
+        self.router = self.router.merge(inner.router);
+        self.routes.extend(inner.routes);
         self
     }
 
@@ -261,12 +333,13 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.router = self.router.route(path, routing::get(handler));
+        let full_path = self.resolve_path(path);
+        self.router = self.router.route(&full_path, routing::get(handler));
         let def = RouteDefinition {
             name,
             method: HttpMethod::Get,
-            path: path.to_string(),
-            auth: false,
+            path: full_path,
+            auth: self.default_auth,
             body_type: None,
             response_type: None,
             query_type: None,
@@ -277,7 +350,15 @@ where
             ws_send_type: None,
             ws_receive_type: None,
         };
+
         WsRouteBuilder { parent: self, def }
+    }
+
+    fn resolve_path(&self, path: &str) -> String {
+        match &self.current_prefix {
+            Some(prefix) => format!("{}{}", prefix, path),
+            None => path.to_string(),
+        }
     }
 
     fn route(
@@ -287,12 +368,13 @@ where
         method_router: MethodRouter<S>,
         default_name: String,
     ) -> RouteBuilder<S> {
-        self.router = self.router.route(path, method_router);
+        let full_path = self.resolve_path(path);
+        self.router = self.router.route(&full_path, method_router);
         let def = RouteDefinition {
             name: default_name,
             method,
-            path: path.to_string(),
-            auth: false,
+            path: full_path,
+            auth: self.default_auth,
             body_type: None,
             response_type: None,
             query_type: None,
