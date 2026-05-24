@@ -13,7 +13,6 @@ publish = true
 default = []
 axum = ["dep:axum"]
 ts-rs = ["dep:ts-rs"]
-surrealdb = ["ts-rs", "ts-rs/surrealdb-impl"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }

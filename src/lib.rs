@@ -52,6 +52,4 @@ pub use builder::{ApiRouter, MaybeTs, RouteBuilder, WsRouteBuilder};
 // in ts-rs-macros, the derive macro generates code referencing `::axfetchum` paths,
 // so all ts-rs types must be accessible through this crate.
 #[cfg(feature = "ts-rs")]
-pub use ts_rs::{
-    Config, Dependency, Dummy, ExportError, IsOption, TS, TypeVisitor, format_docs,
-};
+pub use ts_rs::*;
