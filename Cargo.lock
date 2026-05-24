@@ -12,11 +12,21 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "axfetchum"
 version = "0.1.4"
 dependencies = [
+ "axfetchum-macros",
  "axum",
  "serde",
  "serde_json",
  "tokio",
  "ts-rs",
+]
+
+[[package]]
+name = "axfetchum-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
