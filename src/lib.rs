@@ -46,3 +46,12 @@ pub use types::{HttpMethod, PathParam, RouteCollection, RouteDefinition, TypeReg
 
 #[cfg(feature = "axum")]
 pub use builder::{ApiRouter, MaybeTs, RouteBuilder, WsRouteBuilder};
+
+// Re-export ts-rs surface so consuming crates can use the derive macro and trait
+// without a direct ts-rs dependency. When the `companion-crate` feature is enabled
+// in ts-rs-macros, the derive macro generates code referencing `::axfetchum` paths,
+// so all ts-rs types must be accessible through this crate.
+#[cfg(feature = "ts-rs")]
+pub use ts_rs::{
+    Config, Dependency, Dummy, ExportError, IsOption, TS, TypeVisitor, format_docs,
+};

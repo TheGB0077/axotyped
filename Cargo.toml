@@ -13,10 +13,11 @@ publish = true
 default = []
 axum = ["dep:axum"]
 ts-rs = ["dep:ts-rs"]
+surrealdb = ["ts-rs", "ts-rs/surrealdb-impl"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
-ts-rs = { version = "12", optional = true, features = ["serde-json-impl"] }
+ts-rs = { git = "https://github.com/TheGB0077/ts-rs.git", branch = "fork", optional = true, features = ["serde-json-impl", "companion-crate"] }
 
 [dev-dependencies]
 axum = "0.8"
