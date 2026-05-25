@@ -2,7 +2,7 @@
 //!
 //! - `#[endpoint]` — attribute on handler functions; extracts `Json<T>`, `Query<T>` from
 //!   the signature and generates a companion `__EndpointMeta` struct
-//! - `endpoint!()` — call-site macro that wraps a handler path with its metadata
+//! - `register!()` — call-site macro that wraps a handler path with its metadata
 
 use proc_macro::TokenStream;
 use quote::quote;
