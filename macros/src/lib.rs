@@ -136,12 +136,22 @@ pub fn register(input: TokenStream) -> TokenStream {
 // Type extraction helpers
 // ---------------------------------------------------------------------------
 
+/// Check whether a type can be used in generated turbofish positions.
+///
+/// `impl Trait` types (e.g. `impl IntoResponse`) cannot appear in
+/// `::<T>()` turbofish syntax, so we must exclude them from metadata generation.
+fn is_type_inferable(ty: &Type) -> bool {
+    !matches!(ty, Type::ImplTrait(_))
+}
+
 /// Extract the inner `T` from `Json<T>` in function parameters.
 fn extract_body_type(item_fn: &ItemFn) -> Option<Type> {
     for arg in &item_fn.sig.inputs {
         if let FnArg::Typed(pat_type) = arg {
             if let Some(inner) = extract_generic_from_type(&pat_type.ty, "Json") {
-                return Some(inner.clone());
+                if is_type_inferable(inner) {
+                    return Some(inner.clone());
+                }
             }
         }
     }
@@ -153,7 +163,9 @@ fn extract_query_type(item_fn: &ItemFn) -> Option<Type> {
     for arg in &item_fn.sig.inputs {
         if let FnArg::Typed(pat_type) = arg {
             if let Some(inner) = extract_generic_from_type(&pat_type.ty, "Query") {
-                return Some(inner.clone());
+                if is_type_inferable(inner) {
+                    return Some(inner.clone());
+                }
             }
         }
     }
@@ -166,6 +178,7 @@ fn extract_query_type(item_fn: &ItemFn) -> Option<Type> {
 /// - `Json<T>` → T
 /// - `Result<Json<T>, E>` → T
 /// - `Result<StatusCode, StatusCode>` → None (no response body)
+/// - `Result<impl Trait, E>` → None (cannot use in turbofish)
 fn extract_response_type(item_fn: &ItemFn) -> Option<Type> {
     let ret = match &item_fn.sig.output {
         ReturnType::Type(_, ty) => ty.as_ref(),
@@ -174,6 +187,10 @@ fn extract_response_type(item_fn: &ItemFn) -> Option<Type> {
 
     // Try to unwrap Result<Json<T>, E>
     if let Some(ok_type) = extract_generic_from_type(ret, "Result") {
+        // impl Trait cannot be placed in turbofish positions
+        if !is_type_inferable(ok_type) {
+            return None;
+        }
         if let Some(inner) = extract_generic_from_type(ok_type, "Json") {
             return Some(inner.clone());
         }
@@ -186,7 +203,9 @@ fn extract_response_type(item_fn: &ItemFn) -> Option<Type> {
 
     // Try Json<T> directly (non-Result)
     if let Some(inner) = extract_generic_from_type(ret, "Json") {
-        return Some(inner.clone());
+        if is_type_inferable(inner) {
+            return Some(inner.clone());
+        }
     }
 
     None
@@ -359,5 +378,41 @@ mod tests {
         if let Type::Path(p) = &inner[0] {
             assert_eq!(p.path.segments.last().unwrap().ident, "User");
         }
+    }
+
+    #[test]
+    fn test_reject_impl_trait_response() {
+        // Result<impl IntoResponse, StatusCode> must not produce metadata
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn handler() -> Result<impl IntoResponse, StatusCode> {}
+        };
+        assert!(extract_response_type(&item_fn).is_none());
+    }
+
+    #[test]
+    fn test_reject_impl_trait_body() {
+        // Json<impl DeserializeOwned> in params must not produce metadata
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn handler(Json(body): Json<impl DeserializeOwned>) -> StatusCode {}
+        };
+        assert!(extract_body_type(&item_fn).is_none());
+    }
+
+    #[test]
+    fn test_reject_impl_trait_query() {
+        // Query<impl SomeTrait> in params must not produce metadata
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn handler(Query(params): Query<impl SomeTrait>) -> StatusCode {}
+        };
+        assert!(extract_query_type(&item_fn).is_none());
+    }
+
+    #[test]
+    fn test_reject_impl_trait_in_json_response() {
+        // -> Json<impl SomeTrait> (non-Result) must not produce metadata
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn handler() -> Json<impl Serialize> {}
+        };
+        assert!(extract_response_type(&item_fn).is_none());
     }
 }
