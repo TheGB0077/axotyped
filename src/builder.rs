@@ -36,6 +36,7 @@ use axum::handler::Handler;
 use axum::routing::{self, MethodRouter};
 
 use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
+use crate::EndpointMeta;
 
 // ---------------------------------------------------------------------------
 // Type collection helper
@@ -58,11 +59,41 @@ impl<T: 'static> MaybeTs for T {}
 
 /// Register a type for TypeScript export. Deduplicates by TypeId.
 /// When the `ts-rs` feature is disabled, this is a no-op.
-fn collect_type<T: MaybeTs + 'static>(collection: &mut RouteCollection) {
+pub fn collect_type<T: MaybeTs + 'static>(collection: &mut RouteCollection) {
     #[cfg(feature = "ts-rs")]
     collection.register_type::<T>();
     #[cfg(not(feature = "ts-rs"))]
     let _ = collection;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata sideband (thread-local)
+// ---------------------------------------------------------------------------
+
+/// Function pointer type for applying endpoint metadata.
+type MetaApplierFn = fn(&mut RouteDefinition, &mut RouteCollection);
+
+thread_local! {
+    /// Sideband for passing metadata from `register!()` to the builder methods.
+    ///
+    /// `register!()` sets this before the handler is passed to `.post()` etc.
+    /// The builder method reads and clears it after applying the metadata.
+    /// This avoids needing separate method overloads.
+    static PENDING_META: std::cell::RefCell<Option<MetaApplierFn>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+/// Set the pending metadata applier. Called by `register!()`.
+pub fn set_pending_meta(apply_fn: MetaApplierFn) {
+    PENDING_META.with(|m| {
+        *m.borrow_mut() = Some(apply_fn);
+    });
+}
+
+/// Take and clear the pending metadata applier. Called by the builder methods.
+fn take_pending_meta() -> Option<MetaApplierFn> {
+    PENDING_META.with(|m| m.borrow_mut().take())
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +133,7 @@ fn strip_module_paths(type_name: &str) -> String {
 }
 
 /// Get the stripped type name for a Rust type.
-fn type_string<T: 'static>() -> String {
+pub fn type_string<T: 'static>() -> String {
     strip_module_paths(std::any::type_name::<T>())
 }
 
@@ -273,13 +304,19 @@ where
     // --- Standard HTTP method helpers ---
 
     /// Add a GET route.
+    ///
+    /// If the handler was wrapped in `register!()`, body/response/query types are
+    /// auto-applied from the `#[endpoint]` metadata. Otherwise, use `.body()`,
+    /// `.response()`, etc. to specify types manually.
     pub fn get<H, T>(self, path: &str, handler: H) -> RouteBuilder<S>
     where
         H: Handler<T, S> + 'static,
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Get, routing::get(handler), name)
+        let mut builder = self.route(path, HttpMethod::Get, routing::get(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a POST route.
@@ -289,7 +326,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Post, routing::post(handler), name)
+        let mut builder = self.route(path, HttpMethod::Post, routing::post(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a PUT route.
@@ -299,7 +338,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Put, routing::put(handler), name)
+        let mut builder = self.route(path, HttpMethod::Put, routing::put(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a PATCH route.
@@ -309,7 +350,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Patch, routing::patch(handler), name)
+        let mut builder = self.route(path, HttpMethod::Patch, routing::patch(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a DELETE route.
@@ -319,7 +362,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Delete, routing::delete(handler), name)
+        let mut builder = self.route(path, HttpMethod::Delete, routing::delete(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a WebSocket route.
@@ -416,6 +461,14 @@ impl<S> RouteBuilder<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    /// Apply any pending metadata from `register!()`. Called internally by the
+    /// HTTP method helpers right after route registration.
+    fn apply_pending_meta(&mut self) {
+        if let Some(apply_fn) = take_pending_meta() {
+            apply_fn(&mut self.def, &mut self.parent.routes);
+        }
+    }
+
     /// Set the request body type.
     pub fn body<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.body_type = Some(type_string::<T>());
