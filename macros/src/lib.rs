@@ -36,25 +36,37 @@ pub fn endpoint(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let response_type = extract_response_type(&item_fn);
 
     let body_register = match &body_type {
-        Some(t) => quote! {
-            __def.body_type = Some(::axfetchum::__private::type_string::<#t>());
-            ::axfetchum::__private::collect_type::<#t>(__registry);
+        Some(t) => {
+            let inner = unwrap_container_types(t);
+            quote! {
+                __def.body_type = Some(::axfetchum::__private::type_string::<#t>());
+                ::axfetchum::__private::collect_type::<#t>(__registry);
+                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+            }
         },
         None => quote! {},
     };
 
     let query_register = match &query_type {
-        Some(t) => quote! {
-            __def.query_type = Some(::axfetchum::__private::type_string::<#t>());
-            ::axfetchum::__private::collect_type::<#t>(__registry);
+        Some(t) => {
+            let inner = unwrap_container_types(t);
+            quote! {
+                __def.query_type = Some(::axfetchum::__private::type_string::<#t>());
+                ::axfetchum::__private::collect_type::<#t>(__registry);
+                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+            }
         },
         None => quote! {},
     };
 
     let response_register = match &response_type {
-        Some(t) => quote! {
-            __def.response_type = Some(::axfetchum::__private::type_string::<#t>());
-            ::axfetchum::__private::collect_type::<#t>(__registry);
+        Some(t) => {
+            let inner = unwrap_container_types(t);
+            quote! {
+                __def.response_type = Some(::axfetchum::__private::type_string::<#t>());
+                ::axfetchum::__private::collect_type::<#t>(__registry);
+                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+            }
         },
         None => quote! {},
     };
@@ -213,6 +225,22 @@ fn extract_generic_from_type<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type
     }
 }
 
+/// Recursively unwrap `Vec<T>` and `Option<T>` wrappers, returning the
+/// innermost non-container type(s). This ensures types that only appear
+/// inside a container (e.g. `Vec<SkillProgress>`) still get registered.
+fn unwrap_container_types(ty: &Type) -> Vec<Type> {
+    let mut current = ty;
+    loop {
+        if let Some(inner) = extract_generic_from_type(current, "Vec") {
+            current = inner;
+        } else if let Some(inner) = extract_generic_from_type(current, "Option") {
+            current = inner;
+        } else {
+            return vec![current.clone()];
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -286,6 +314,50 @@ mod tests {
         let ty = extract_query_type(&item_fn).unwrap();
         if let Type::Path(p) = &ty {
             assert_eq!(p.path.segments.last().unwrap().ident, "SearchParams");
+        }
+    }
+
+    #[test]
+    fn test_unwrap_vec_response() {
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn list_users() -> Result<Json<Vec<User>>, StatusCode> {}
+        };
+        let ty = extract_response_type(&item_fn).unwrap();
+        // Response type should be Vec<User>
+        if let Type::Path(p) = &ty {
+            assert_eq!(p.path.segments.last().unwrap().ident, "Vec");
+        }
+        // Inner types should include User
+        let inner = unwrap_container_types(&ty);
+        assert_eq!(inner.len(), 1);
+        if let Type::Path(p) = &inner[0] {
+            assert_eq!(p.path.segments.last().unwrap().ident, "User");
+        }
+    }
+
+    #[test]
+    fn test_unwrap_nested_option_vec() {
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn get_items() -> Result<Json<Option<Vec<Item>>>, StatusCode> {}
+        };
+        let ty = extract_response_type(&item_fn).unwrap();
+        let inner = unwrap_container_types(&ty);
+        assert_eq!(inner.len(), 1);
+        if let Type::Path(p) = &inner[0] {
+            assert_eq!(p.path.segments.last().unwrap().ident, "Item");
+        }
+    }
+
+    #[test]
+    fn test_unwrap_plain_type_unchanged() {
+        let item_fn: ItemFn = parse_quote! {
+            pub async fn get_user() -> Result<Json<User>, StatusCode> {}
+        };
+        let ty = extract_response_type(&item_fn).unwrap();
+        let inner = unwrap_container_types(&ty);
+        assert_eq!(inner.len(), 1);
+        if let Type::Path(p) = &inner[0] {
+            assert_eq!(p.path.segments.last().unwrap().ident, "User");
         }
     }
 }
