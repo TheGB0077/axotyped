@@ -397,3 +397,119 @@ fn builder_generates_valid_ts() {
     assert!(output.contains("UserResponse[]")); // Vec<UserResponse> → UserResponse[]
     assert!(output.contains("users:")); // group
 }
+
+// ---------------------------------------------------------------------------
+// group_with: closure-based grouping with prefix + auth
+// ---------------------------------------------------------------------------
+
+#[test]
+fn group_with_applies_prefix() {
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .group_with("admin", |g| {
+            g.get("/users", list_users)
+                .response::<Vec<UserResponse>>()
+                .done()
+        })
+        .build();
+
+    let r = &routes.routes()[0];
+    assert_eq!(r.path, "/admin/users");
+    assert_eq!(r.group.as_deref(), Some("admin"));
+}
+
+#[test]
+fn group_with_auth_all() {
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .group_with("admin", |g| {
+            g.auth_all()
+             .get("/users", list_users)
+                .response::<Vec<UserResponse>>()
+                .done()
+             .post("/users", create_user)
+                .json::<CreateUserRequest, UserResponse>()
+                .done()
+        })
+        .build();
+
+    assert!(routes.routes()[0].auth, "GET should have auth from auth_all");
+    assert!(routes.routes()[1].auth, "POST should have auth from auth_all");
+}
+
+#[test]
+fn group_with_custom_prefix() {
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .group_with("admin", |g| {
+            g.set_prefix("/adm")
+             .get("/users", list_users)
+                .response::<Vec<UserResponse>>()
+                .done()
+        })
+        .build();
+
+    assert_eq!(routes.routes()[0].path, "/adm/users");
+}
+
+#[test]
+fn group_with_does_not_leak_state() {
+    async fn health(State(_s): State<AppState>) {}
+
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .group_with("admin", |g| {
+            g.auth_all()
+             .delete("/users/{id}", delete_user)
+                .done()
+        })
+        // Routes after group_with should NOT have admin group/prefix/auth
+        .get("/health", health)
+        .done()
+        .build();
+
+    let admin_route = &routes.routes()[0];
+    assert_eq!(admin_route.path, "/admin/users/{id}");
+    assert_eq!(admin_route.group.as_deref(), Some("admin"));
+    assert!(admin_route.auth);
+
+    let health_route = &routes.routes()[1];
+    assert_eq!(health_route.path, "/health");
+    assert_eq!(health_route.group, None);
+    assert!(!health_route.auth);
+}
+
+#[test]
+fn group_with_multiple_methods() {
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .group_with("admin", |g| {
+            g.auth_all()
+             .get("/users", list_users)
+                .response::<Vec<UserResponse>>()
+                .done()
+             .post("/users", create_user)
+                .json::<CreateUserRequest, UserResponse>()
+                .done()
+             .delete("/users/{id}", delete_user)
+                .done()
+        })
+        .build();
+
+    assert_eq!(routes.len(), 3);
+    for r in routes.routes() {
+        assert!(r.auth, "all routes should have auth");
+        assert!(r.path.starts_with("/admin/"), "path should have prefix: got {}", r.path);
+        assert_eq!(r.group.as_deref(), Some("admin"));
+    }
+}
+
+#[test]
+fn set_prefix_without_group_with() {
+    let (_router, routes) = ApiRouter::<AppState>::new()
+        .set_prefix("/api/v1")
+        .auth_all()
+        .get("/users", list_users)
+        .response::<Vec<UserResponse>>()
+        .done()
+        .build();
+
+    let r = &routes.routes()[0];
+    assert_eq!(r.path, "/api/v1/users");
+    assert!(r.auth);
+}

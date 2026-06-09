@@ -74,6 +74,45 @@ fn sample_routes() -> axfetchum::RouteCollection {
 }
 
 #[test]
+fn generic_types_generate_separate_imports() {
+    // ContentResponse<Dialog> should import ContentResponse and Dialog separately,
+    // not produce a broken "ContentResponse<Dialog>" import with <> in the path.
+    let routes = api_routes! {
+        getDialogs: GET "/dialogs"
+            -> ContentResponse<Dialog>;
+    };
+    let config = GeneratorConfig {
+        enable_groups: false,
+        ..Default::default()
+    };
+    let output = generate(&routes, &config);
+
+    // Should import each type separately
+    assert!(
+        output.contains("import type { ContentResponse }"),
+        "should import ContentResponse separately, got:\n{}",
+        output
+    );
+    assert!(
+        output.contains("import type { Dialog }"),
+        "should import Dialog separately, got:\n{}",
+        output
+    );
+
+    // Should NOT contain angle brackets in import paths
+    assert!(
+        !output.contains("from \"./ContentResponse<Dialog>\""),
+        "import path should not contain angle brackets, got:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("import type { ContentResponse<Dialog> }"),
+        "import should not contain angle brackets in the type name, got:\n{}",
+        output
+    );
+}
+
+#[test]
 fn generates_valid_output() {
     let routes = sample_routes();
     let config = yauth_config();
