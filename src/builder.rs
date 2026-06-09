@@ -29,7 +29,6 @@ use axum::Router;
 use axum::handler::Handler;
 use axum::routing::{self, MethodRouter};
 
-use crate::EndpointMeta;
 use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
 
 // ---------------------------------------------------------------------------
@@ -708,10 +707,6 @@ mod tests {
     }
 
     // -- default_name_from_handler --
-
-    fn dummy_list_users() {}
-    fn dummy_forgot_password() {}
-    fn dummy_register() {}
 
     #[test]
     fn default_name_list_users() {

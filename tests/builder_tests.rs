@@ -1,5 +1,3 @@
-#![cfg(feature = "axum")]
-
 use axotyped::{ApiRouter, HttpMethod};
 use axum::Json;
 use axum::extract::{Path, State};

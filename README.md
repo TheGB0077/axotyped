@@ -64,13 +64,12 @@ Handler names auto-convert to camelCase: `list_projects` → `listProjects`, `cr
 
 ```toml
 [dependencies]
-axotyped = { version = "0.1", features = ["axum", "ts-rs"] }
+axotyped = { version = "0.2", features = ["ts-rs"] }
 ```
 
-- **`axum`** — enables the `ApiRouter` builder, `#[endpoint]`, and `register!()`
-- **`ts-rs`** — enables TypeScript type export for your structs/enums
+- **`ts-rs`** — enables TypeScript type export for your structs/enums (recommended)
 
-Both features are recommended. Without `axum`, the crate provides just the `api_routes!` declarative macro and code generator. Without `ts-rs`, type collection is a no-op.
+Without `ts-rs`, type collection is a no-op — routes are still registered but no `.ts` type files are generated.
 
 `axotyped` re-exports `ts-rs` as `axotyped::TS`, so you don't need a separate `ts-rs` dependency.
 
@@ -200,52 +199,6 @@ ApiRouter::<AppState>::new()
         .done()
     .build()
 ```
-
-### Declarative macro (zero dependencies)
-
-Metadata-only, no Axum dependency — you build the router separately:
-
-```rust
-use axotyped::{api_routes, RouteCollection};
-
-pub fn routes() -> RouteCollection {
-    api_routes! {
-        @group auth
-
-        register: POST "/register"
-            body: RegisterRequest -> MessageResponse;
-        login: POST "/login"
-            body: LoginRequest -> LoginResponse;
-        listProjects: GET "/admin/projects" [auth]
-            query: ListProjectsQuery -> Vec<ProjectResponse>;
-        getProject: GET "/admin/projects/{id}" [auth]
-            -> ProjectResponse;
-        connectWs: GET "/ws/events" [auth, ws]
-            send: ClientEvent, receive: ServerEvent;
-    }
-}
-```
-
-**Macro syntax:**
-
-```
-name: METHOD "/path" [flags]
-    body: RequestType query: QueryType -> ResponseType;
-```
-
-| Element | Description |
-|---|---|
-| `@group name` | Groups subsequent routes into a nested object |
-| `@nogroup` | Clears the current group |
-| `[auth]` | Marks route as requiring authentication |
-| `[redirect]` | Generates a URL builder instead of a fetch call |
-| `[ws]` | Marks route as a WebSocket endpoint |
-| `body: Type` | Request body (supports `Vec<T>`, `Option<T>`) |
-| `query: Type` | Query parameters (supports `Vec<T>`, `Option<T>`) |
-| `-> Type` | Response type (supports `Vec<T>`, `Option<T>`, omit for `void`) |
-| `send: Type` | Client-to-server event type (WS routes) |
-| `receive: Type` | Server-to-client event type (WS routes) |
-| `{param}` in path | Path parameter (becomes a `string` function arg) |
 
 ## Generating the client
 

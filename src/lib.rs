@@ -3,42 +3,37 @@
 //! Auto-generate typed TypeScript API clients from Axum route metadata.
 //!
 //! This crate provides:
-//! - A declarative `api_routes!` macro for defining route metadata
+//! - An `ApiRouter` builder that creates both an Axum router and route metadata
+//! - `#[endpoint]` and `register!()` macros for automatic type inference
 //! - A TypeScript client code generator that produces typed fetch wrappers
 //! - A `check()` function for CI that fails if the generated client is stale
 //!
-//! ## Zero Dependencies
-//!
-//! This crate has no external dependencies — it uses only `std`.
-//! Type generation (the actual `.ts` type files) is handled by [`ts-rs`](https://crates.io/crates/ts-rs)
-//! in the consuming crate.
-//!
 //! ## Quick Start
 //!
-//! ```rust
-//! use axotyped::{api_routes, RouteCollection};
+//! ```rust,ignore
+//! use axotyped::{ApiRouter, endpoint, register};
 //!
-//! fn my_routes() -> RouteCollection {
-//!     api_routes! {
-//!         @group users
-//!
-//!         list: GET "/users" [auth]
-//!             -> UsersResponse;
-//!         getById: GET "/users/{id}" [auth]
-//!             -> UserResponse;
-//!         create: POST "/users" [auth]
-//!             body: CreateUserRequest -> UserResponse;
-//!     }
+//! #[endpoint]
+//! pub async fn list_projects(
+//!     State(state): State<AppState>,
+//! ) -> Result<Json<Vec<ProjectResponse>>, StatusCode> {
+//!     // ...
 //! }
+//!
+//! let (router, routes) = ApiRouter::<AppState>::new()
+//!     .group_with("admin", |g| {
+//!         g.auth_all()
+//!          .get("/projects", register!(list_projects))
+//!              .done()
+//!     })
+//!     .build();
 //! ```
 
 mod generator;
+mod types;
+mod builder;
 #[macro_use]
 mod macros;
-mod types;
-
-#[cfg(feature = "axum")]
-mod builder;
 
 // Re-export public API
 pub use generator::{CheckError, GeneratorConfig, check, generate, generate_to_file};
@@ -46,11 +41,9 @@ pub use types::{
     HttpMethod, PathParam, RouteCollection, RouteDefinition, TypeRegistry, extract_path_params,
 };
 
-#[cfg(feature = "axum")]
 pub use builder::{ApiRouter, MaybeTs, RouteBuilder, WsRouteBuilder};
 
 // Re-export the #[endpoint] attribute macro and register!() call-site macro.
-#[cfg(feature = "axum")]
 pub use axotyped_macros::{endpoint, register};
 
 // Re-export ts-rs surface so consuming crates can use the derive macro and trait
@@ -83,7 +76,6 @@ pub trait EndpointMeta: Sized {
 // ---------------------------------------------------------------------------
 
 /// Internal helpers used by generated code. Not part of the public API.
-#[cfg(feature = "axum")]
 pub mod __private {
     pub use crate::builder::{collect_type, set_pending_meta, type_string};
 }
