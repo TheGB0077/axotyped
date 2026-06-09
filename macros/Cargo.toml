@@ -1,9 +1,9 @@
 [package]
-name = "axfetchum-macros"
+name = "axotyped-macros"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Proc-macros for axfetchum route type inference"
+description = "Proc-macros for axotyped route type inference"
 
 [lib]
 proc-macro = true

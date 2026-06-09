@@ -3,11 +3,11 @@ members = [".", "macros"]
 resolver = "3"
 
 [package]
-name = "axfetchum"
+name = "axotyped"
 version = "0.1.4"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/yackey-labs/axfetchum"
+repository = "https://github.com/TheGB0077/axotyped"
 description = "Auto-generate typed TypeScript API clients from Axum route metadata"
 keywords = ["axum", "typescript", "codegen", "api-client"]
 categories = ["development-tools", "web-programming"]
@@ -15,13 +15,13 @@ publish = true
 
 [features]
 default = []
-axum = ["dep:axum", "dep:axfetchum-macros"]
+axum = ["dep:axum", "dep:axotyped-macros"]
 ts-rs = ["dep:ts-rs"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
-axfetchum-macros = { path = "macros", optional = true }
-ts-rs = { git = "https://github.com/TheGB0077/ts-rs.git", branch = "fork", optional = true, features = ["serde-json-impl", "companion-crate"] }
+axotyped-macros = { path = "macros", optional = true }
+ts-rs = { git = "https://github.com/TheGB0077/ts-rs.git", rev = "a139381a9e5d0c2848bf92aec6c65d2a9c96b433", optional = true, features = ["serde-json-impl", "companion-crate"] }
 
 [dev-dependencies]
 axum = "0.8"

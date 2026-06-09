@@ -1,3 +1,14 @@
+## 0.1.5 (UNRELEASED)
+
+### Features
+
+- collect inner types of `Vec<T>` / `Option<T>` in `#[endpoint]` macro, fixing missing `.ts` files for types that only appear inside containers
+- add `group_with()` closure-based grouping with scoped URL prefix, default auth, and TS namespace
+- re-export `ts-rs` as `axotyped::TS` so consuming crates don't need a separate `ts-rs` dependency
+
+- forked the crate and rebranded to axotyped
+- use forked `ts-rs` dependency to pinned commit with companion-crate support
+
 ## 0.1.4 (2026-03-30)
 
 ### Fixes

@@ -1,43 +1,52 @@
-# axfetchum
+# axotyped
 
 Auto-generate typed TypeScript API clients from Axum route metadata.
 
 ## Quick start
 
-Define your routes once — get both an Axum router and a typed TypeScript client:
+Annotate your handlers with `#[endpoint]`, register them with `register!()`, and get both an Axum router and a typed TypeScript client:
 
 ```rust
-use axfetchum::ApiRouter;
+use axotyped::{ApiRouter, endpoint, register};
 
-let (router, routes) = ApiRouter::<AppState>::new()
-    .group("emailPassword")
-    .post("/register", register)
-        .json::<RegisterRequest, MessageResponse>()
-        .done()
-    .post("/login", login)
-        .body::<LoginRequest>()
-        .done()
-    .post("/change-password", change_password)
-        .json::<ChangePasswordRequest, MessageResponse>()
-        .auth()
-        .done()
-    .group("admin")
-    .get("/admin/users", list_users)
-        .response::<Vec<UserResponse>>()
-        .auth()
-        .done()
-    .get("/admin/users/{id}", get_user)
-        .response::<UserResponse>()
-        .auth()
-        .done()
-    .delete("/admin/users/{id}", delete_user)
-        .auth()
-        .done()
-    .build();
+// Derive axotyped::TS (re-exported ts-rs) for any types crossing the wire
+#[derive(serde::Serialize, axotyped::TS)]
+pub struct ProjectResponse {
+    pub id: String,
+    pub title: String,
+}
 
-// `router` is a real Axum Router — plug it into your app
-// `routes` generates a TypeScript client like this:
+// #[endpoint] extracts Json<T>, Query<T>, and response types from the signature
+#[endpoint]
+pub async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ProjectResponse>>, StatusCode> {
+    // ...
+}
+
+#[endpoint]
+pub async fn create_project(
+    State(state): State<AppState>,
+    Json(body): Json<CreateProjectRequest>,
+) -> Result<Json<ProjectResponse>, StatusCode> {
+    // ...
+}
+
+// register!() wires the handler into both the Axum router and type metadata
+fn routes() -> (Router<AppState>, RouteCollection) {
+    ApiRouter::<AppState>::new()
+        .group_with("projects", |g| {
+            g.auth_all()
+             .get("/projects", register!(list_projects))
+                 .done()
+             .post("/projects", register!(create_project))
+                 .done()
+        })
+        .build()
+}
 ```
+
+Generates a TypeScript client:
 
 ```typescript
 const api = createApiClient({
@@ -45,23 +54,25 @@ const api = createApiClient({
   getToken: async () => localStorage.getItem("token"),
 });
 
-await api.emailPassword.register({ email: "a@b.com", password: "secret" });
-await api.emailPassword.login({ email: "a@b.com", password: "secret" });
-const users = await api.admin.listUsers();
-const user = await api.admin.getUser("some-id");
+const projects = await api.projects.listProjects();
+const newProject = await api.projects.createProject({ title: "My Project" });
 ```
 
-Handler names auto-convert to camelCase: `list_users` → `listUsers`, `change_password` → `changePassword`. Override with `.as_("customName")` when needed.
+Handler names auto-convert to camelCase: `list_projects` → `listProjects`, `create_project` → `createProject`. Override with `.as_("customName")` when needed.
 
 ## Installation
 
 ```toml
 [dependencies]
-axfetchum = { version = "0.1", features = ["axum"] }
-ts-rs = { version = "11", features = ["serde-compat"] }
+axotyped = { version = "0.1", features = ["axum", "ts-rs"] }
 ```
 
-The `axum` feature enables the `ApiRouter` builder. Without it, the crate is zero-dependency and provides just the `api_routes!` macro and code generator.
+- **`axum`** — enables the `ApiRouter` builder, `#[endpoint]`, and `register!()`
+- **`ts-rs`** — enables TypeScript type export for your structs/enums
+
+Both features are recommended. Without `axum`, the crate provides just the `api_routes!` declarative macro and code generator. Without `ts-rs`, type collection is a no-op.
+
+`axotyped` re-exports `ts-rs` as `axotyped::TS`, so you don't need a separate `ts-rs` dependency.
 
 ## How it works
 
@@ -69,73 +80,148 @@ The `axum` feature enables the `ApiRouter` builder. Without it, the crate is zer
 
 | Crate | Generates | Purpose |
 |---|---|---|
-| **`axfetchum`** | `generated.ts` — typed fetch wrappers | Route definitions, client factory, error handling |
+| **`axotyped`** | `generated.ts` — typed fetch wrappers | Route definitions, client factory, error handling |
 | **[`ts-rs`](https://crates.io/crates/ts-rs)** | Individual `.ts` type files | TypeScript interfaces for your Rust structs |
 
-`axfetchum` generates `import type { LoginRequest } from "./bindings/LoginRequest"` — those files come from `ts-rs`.
+`axotyped` generates `import type { ProjectResponse } from "./bindings/ProjectResponse"` — those files come from `ts-rs`.
 
-## Two ways to define routes
+## Defining routes
 
-### Option A: ApiRouter builder (recommended)
+### Recommended: `#[endpoint]` + `register!()`
 
-One definition, zero duplication — builds both the Axum router and the route metadata:
+Annotate handlers with `#[endpoint]` and pass them to `register!()` inside the builder. Types are inferred from the function signature — no manual specification needed.
 
 ```rust
-use axfetchum::ApiRouter;
+use axotyped::{ApiRouter, endpoint, register};
 
-fn user_routes() -> (Router<AppState>, RouteCollection) {
-    ApiRouter::<AppState>::new()
-        .group("users")
-        .get("/users", list_users)
-            .response::<Vec<UserResponse>>()
-            .auth()
-            .done()
-        .post("/users", create_user)
-            .json::<CreateUserRequest, UserResponse>()
-            .auth()
-            .done()
-        .get("/users/{id}", get_user)
-            .response::<UserResponse>()
-            .auth()
-            .done()
-        .delete("/users/{id}", delete_user)
-            .auth()
-            .done()
-        .build()
+#[derive(serde::Deserialize, axotyped::TS)]
+pub struct CreateProjectRequest {
+    pub title: String,
 }
+
+#[endpoint]
+pub async fn create_project(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateProjectRequest>,
+) -> Result<Json<ProjectResponse>, StatusCode> {
+    // ...
+}
+
+#[endpoint]
+pub async fn list_projects(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ProjectResponse>>, StatusCode> {
+    // ...
+}
+
+#[endpoint]
+pub async fn delete_project(
+    Path(key): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<StatusCode, StatusCode> {
+    // ...
+}
+
+ApiRouter::<Arc<AppState>>::new()
+    .group_with("admin", |g| {
+        g.auth_all()
+         .post("/project", register!(create_project))
+             .done()
+         .get("/project", register!(list_projects))
+             .done()
+         .delete("/project/{key}", register!(delete_project))
+             .done()
+    })
+    .build()
 ```
 
-**Builder features:**
-- **Auto camelCase names** — `list_users` → `listUsers`, no string literals needed
-- **`.json::<Body, Response>()`** — set both types in one call
-- **`.done()`** — finalize with the auto-derived name
-- **`.as_("name")`** — override the auto-name when you want something different
-- **`.merge()`** — compose multiple ApiRouters (great for plugin architectures)
-- **`Vec<T>`, `Option<T>`** — generic types just work
+**How type inference works:**
 
-Requires `features = ["axum"]`.
+| Signature pattern | Extracted type |
+|---|---|
+| `Json(body): Json<T>` in params | Body type: `T` |
+| `Query(params): Query<T>` in params | Query type: `T` |
+| `-> Result<Json<T>, E>` | Response type: `T` |
+| `-> Result<StatusCode, StatusCode>` | No response (void) |
+| `-> Json<T>` (non-Result) | Response type: `T` |
 
-### Option B: Declarative macro (zero dependencies)
+Inner types of `Vec<T>` and `Option<T>` are automatically collected for TypeScript export, so `Vec<ProjectTag>` correctly generates `ProjectTag.ts`.
+
+`impl Trait` types (e.g. `Result<impl IntoResponse, E>`) are gracefully skipped — no metadata is generated, compilation is not affected.
+
+### Grouping routes
+
+**`.group(name)`** — sets the TypeScript namespace for subsequent routes (no URL prefix):
+
+```rust
+ApiRouter::<AppState>::new()
+    .group("admin")
+    .get("/reports", register!(list_reports))
+        .auth()
+        .done()
+    // ...
+```
+
+**`.group_with(name, closure)`** — closure-based grouping with scoped URL prefix, default auth, and TypeScript namespace. The group's config does not leak to routes registered after the closure.
+
+The prefix defaults to `"/{name}"` but can be overridden with `.set_prefix()` inside the closure.
+
+```rust
+ApiRouter::<Arc<AppState>>::new()
+    .group_with("admin", |g| {
+        g.auth_all()
+         .post("/project", register!(create_project))
+             .done()
+         .get("/project", register!(list_projects))
+             .done()
+         .delete("/project/{key}", register!(delete_project))
+             .done()
+    })
+    .get("/health", register!(health))
+        .done()
+    .build()
+// admin routes: POST /admin/project, GET /admin/project, DELETE /admin/project/{key}
+// health route: GET /health (no prefix, no auth, no group)
+```
+
+### Manual type specification
+
+You can still specify types explicitly on the builder when needed:
+
+```rust
+ApiRouter::<AppState>::new()
+    .get("/projects", list_projects)
+        .response::<Vec<ProjectResponse>>()
+        .auth()
+        .done()
+    .post("/projects", create_project)
+        .json::<CreateProjectRequest, ProjectResponse>()
+        .auth()
+        .done()
+    .build()
+```
+
+### Declarative macro (zero dependencies)
 
 Metadata-only, no Axum dependency — you build the router separately:
 
 ```rust
-use axfetchum::{api_routes, RouteCollection};
+use axotyped::{api_routes, RouteCollection};
 
 pub fn routes() -> RouteCollection {
     api_routes! {
-        @group emailPassword
+        @group auth
 
         register: POST "/register"
             body: RegisterRequest -> MessageResponse;
         login: POST "/login"
             body: LoginRequest -> LoginResponse;
-        listUsers: GET "/admin/users" [auth]
-            query: ListUsersQuery -> Vec<UserResponse>;
-        getUser: GET "/admin/users/{id}" [auth]
-            -> UserResponse;
-        authorize: GET "/oauth/{provider}/authorize" [redirect]
-            query: AuthorizeQuery;
+        listProjects: GET "/admin/projects" [auth]
+            query: ListProjectsQuery -> Vec<ProjectResponse>;
+        getProject: GET "/admin/projects/{id}" [auth]
+            -> ProjectResponse;
+        connectWs: GET "/ws/events" [auth, ws]
+            send: ClientEvent, receive: ServerEvent;
     }
 }
 ```
@@ -153,17 +239,20 @@ name: METHOD "/path" [flags]
 | `@nogroup` | Clears the current group |
 | `[auth]` | Marks route as requiring authentication |
 | `[redirect]` | Generates a URL builder instead of a fetch call |
+| `[ws]` | Marks route as a WebSocket endpoint |
 | `body: Type` | Request body (supports `Vec<T>`, `Option<T>`) |
 | `query: Type` | Query parameters (supports `Vec<T>`, `Option<T>`) |
 | `-> Type` | Response type (supports `Vec<T>`, `Option<T>`, omit for `void`) |
+| `send: Type` | Client-to-server event type (WS routes) |
+| `receive: Type` | Server-to-client event type (WS routes) |
 | `{param}` in path | Path parameter (becomes a `string` function arg) |
 
 ## Generating the client
 
-Generation runs as a `#[test]` — not a `build.rs` — because it needs to call your crate's route functions after compilation.
+Generation runs at build time — call it from `main.rs` or a `#[test]` after your routes are defined.
 
 ```rust
-use axfetchum::GeneratorConfig;
+use axotyped::GeneratorConfig;
 
 fn config() -> GeneratorConfig {
     GeneratorConfig {
@@ -178,25 +267,21 @@ fn config() -> GeneratorConfig {
     }
 }
 
-#[test]
-fn generate_ts_client() {
-    // With ApiRouter:
-    let (_router, routes) = my_app::user_routes();
-    // Or with macro:
-    // let routes = my_app::routes();
-    axfetchum::generate_to_file(&routes, &config()).unwrap();
+// Export ts-rs type files, then generate the client:
+fn generate_ts_client(routes: &axotyped::RouteCollection) {
+    use axotyped::GeneratorConfig;
+
+    let bindings_dir = std::path::Path::new("./bindings");
+    routes.export_types(&bindings_dir).unwrap();
+    axotyped::generate_to_file(routes, &config()).unwrap();
 }
 
-#[test]
-fn check_ts_client_up_to_date() {
-    let (_router, routes) = my_app::user_routes();
-    axfetchum::check(&routes, &config())
-        .expect("Generated TypeScript client is out of date! Run: cargo test generate_ts_client");
+// CI check — fails if the committed file is stale:
+fn check_ts_client(routes: &axotyped::RouteCollection) {
+    axotyped::check(routes, &config())
+        .expect("Generated TypeScript client is out of date!");
 }
 ```
-
-**Local:** `cargo test generate_ts_client` to regenerate.
-**CI:** `cargo test check_ts_client_up_to_date` fails if the committed file is stale.
 
 ## GeneratorConfig
 

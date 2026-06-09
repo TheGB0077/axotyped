@@ -1,4 +1,4 @@
-//! # axfetchum
+//! # axotyped
 //!
 //! Auto-generate typed TypeScript API clients from Axum route metadata.
 //!
@@ -16,7 +16,7 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use axfetchum::{api_routes, RouteCollection};
+//! use axotyped::{api_routes, RouteCollection};
 //!
 //! fn my_routes() -> RouteCollection {
 //!     api_routes! {
@@ -51,11 +51,11 @@ pub use builder::{ApiRouter, MaybeTs, RouteBuilder, WsRouteBuilder};
 
 // Re-export the #[endpoint] attribute macro and register!() call-site macro.
 #[cfg(feature = "axum")]
-pub use axfetchum_macros::{endpoint, register};
+pub use axotyped_macros::{endpoint, register};
 
 // Re-export ts-rs surface so consuming crates can use the derive macro and trait
 // without a direct ts-rs dependency. When the `companion-crate` feature is enabled
-// in ts-rs-macros, the derive macro generates code referencing `::axfetchum` paths,
+// in ts-rs-macros, the derive macro generates code referencing `::axotyped` paths,
 // so all ts-rs types must be accessible through this crate.
 #[cfg(feature = "ts-rs")]
 pub use ts_rs::*;
