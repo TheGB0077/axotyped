@@ -8,8 +8,8 @@ extra_changelog_sections = [
 ]
 
 [github]
-owner = "yackey-labs"
-repo = "axfetchum"
+owner = "TheGB0077"
+repo = "axotyped"
 
 [[workflows]]
 name = "release"

@@ -3,7 +3,7 @@
 /// # Syntax
 ///
 /// ```rust,ignore
-/// use axfetchum::api_routes;
+/// use axotyped::api_routes;
 ///
 /// let routes = api_routes! {
 ///     @group emailPassword
@@ -85,7 +85,7 @@ macro_rules! api_routes {
             path_params: $crate::extract_path_params($path),
             group: $group.clone(),
             redirect: false,
-            websocket: $crate::api_routes!(@has_ws_flag $([$($flag),*])?),
+            websocket: true,
             ws_send_type: $crate::api_routes!(@opt_type $so $(<$si>)?),
             ws_receive_type: $crate::api_routes!(@opt_type $ro2 $(<$ri2>)?),
         });

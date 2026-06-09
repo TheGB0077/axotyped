@@ -1,4 +1,4 @@
-//! Proc-macros for axfetchum route type inference.
+//! Proc-macros for axotyped route type inference.
 //!
 //! - `#[endpoint]` — attribute on handler functions; extracts `Json<T>`, `Query<T>` from
 //!   the signature and generates a companion `__EndpointMeta` struct
@@ -6,7 +6,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, FnArg, ItemFn, PathArguments, ReturnType, Type};
+use syn::{FnArg, ItemFn, PathArguments, ReturnType, Type, parse_macro_input};
 
 // ---------------------------------------------------------------------------
 // #[endpoint] — attribute macro on handler functions
@@ -39,11 +39,11 @@ pub fn endpoint(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(t) => {
             let inner = unwrap_container_types(t);
             quote! {
-                __def.body_type = Some(::axfetchum::__private::type_string::<#t>());
-                ::axfetchum::__private::collect_type::<#t>(__registry);
-                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+                __def.body_type = Some(::axotyped::__private::type_string::<#t>());
+                ::axotyped::__private::collect_type::<#t>(__registry);
+                #(::axotyped::__private::collect_type::<#inner>(__registry);)*
             }
-        },
+        }
         None => quote! {},
     };
 
@@ -51,11 +51,11 @@ pub fn endpoint(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(t) => {
             let inner = unwrap_container_types(t);
             quote! {
-                __def.query_type = Some(::axfetchum::__private::type_string::<#t>());
-                ::axfetchum::__private::collect_type::<#t>(__registry);
-                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+                __def.query_type = Some(::axotyped::__private::type_string::<#t>());
+                ::axotyped::__private::collect_type::<#t>(__registry);
+                #(::axotyped::__private::collect_type::<#inner>(__registry);)*
             }
-        },
+        }
         None => quote! {},
     };
 
@@ -63,11 +63,11 @@ pub fn endpoint(_attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(t) => {
             let inner = unwrap_container_types(t);
             quote! {
-                __def.response_type = Some(::axfetchum::__private::type_string::<#t>());
-                ::axfetchum::__private::collect_type::<#t>(__registry);
-                #(::axfetchum::__private::collect_type::<#inner>(__registry);)*
+                __def.response_type = Some(::axotyped::__private::type_string::<#t>());
+                ::axotyped::__private::collect_type::<#t>(__registry);
+                #(::axotyped::__private::collect_type::<#inner>(__registry);)*
             }
-        },
+        }
         None => quote! {},
     };
 
@@ -79,8 +79,8 @@ pub fn endpoint(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[allow(non_camel_case_types)]
         pub struct #meta_struct_name;
 
-        impl ::axfetchum::EndpointMeta for #meta_struct_name {
-            fn apply(__def: &mut ::axfetchum::RouteDefinition, __registry: &mut ::axfetchum::RouteCollection) {
+        impl ::axotyped::EndpointMeta for #meta_struct_name {
+            fn apply(__def: &mut ::axotyped::RouteDefinition, __registry: &mut ::axotyped::RouteCollection) {
                 #body_register
                 #query_register
                 #response_register
@@ -124,7 +124,7 @@ pub fn register(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         {
-            ::axfetchum::__private::set_pending_meta(<#meta_path as ::axfetchum::EndpointMeta>::apply);
+            ::axotyped::__private::set_pending_meta(<#meta_path as ::axotyped::EndpointMeta>::apply);
             #path
         }
     };

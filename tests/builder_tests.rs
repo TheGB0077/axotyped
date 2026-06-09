@@ -1,6 +1,4 @@
-#![cfg(feature = "axum")]
-
-use axfetchum::{ApiRouter, HttpMethod};
+use axotyped::{ApiRouter, HttpMethod};
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
@@ -386,12 +384,12 @@ fn builder_generates_valid_ts() {
         .done()
         .build();
 
-    let config = axfetchum::GeneratorConfig {
+    let config = axotyped::GeneratorConfig {
         factory_name: "createApiClient".into(),
         ..Default::default()
     };
 
-    let output = axfetchum::generate(&routes, &config);
+    let output = axotyped::generate(&routes, &config);
     assert!(output.contains("listUsers"));
     assert!(output.contains("createUser"));
     assert!(output.contains("UserResponse[]")); // Vec<UserResponse> → UserResponse[]
@@ -422,17 +420,23 @@ fn group_with_auth_all() {
     let (_router, routes) = ApiRouter::<AppState>::new()
         .group_with("admin", |g| {
             g.auth_all()
-             .get("/users", list_users)
+                .get("/users", list_users)
                 .response::<Vec<UserResponse>>()
                 .done()
-             .post("/users", create_user)
+                .post("/users", create_user)
                 .json::<CreateUserRequest, UserResponse>()
                 .done()
         })
         .build();
 
-    assert!(routes.routes()[0].auth, "GET should have auth from auth_all");
-    assert!(routes.routes()[1].auth, "POST should have auth from auth_all");
+    assert!(
+        routes.routes()[0].auth,
+        "GET should have auth from auth_all"
+    );
+    assert!(
+        routes.routes()[1].auth,
+        "POST should have auth from auth_all"
+    );
 }
 
 #[test]
@@ -440,7 +444,7 @@ fn group_with_custom_prefix() {
     let (_router, routes) = ApiRouter::<AppState>::new()
         .group_with("admin", |g| {
             g.set_prefix("/adm")
-             .get("/users", list_users)
+                .get("/users", list_users)
                 .response::<Vec<UserResponse>>()
                 .done()
         })
@@ -455,9 +459,7 @@ fn group_with_does_not_leak_state() {
 
     let (_router, routes) = ApiRouter::<AppState>::new()
         .group_with("admin", |g| {
-            g.auth_all()
-             .delete("/users/{id}", delete_user)
-                .done()
+            g.auth_all().delete("/users/{id}", delete_user).done()
         })
         // Routes after group_with should NOT have admin group/prefix/auth
         .get("/health", health)
@@ -480,13 +482,13 @@ fn group_with_multiple_methods() {
     let (_router, routes) = ApiRouter::<AppState>::new()
         .group_with("admin", |g| {
             g.auth_all()
-             .get("/users", list_users)
+                .get("/users", list_users)
                 .response::<Vec<UserResponse>>()
                 .done()
-             .post("/users", create_user)
+                .post("/users", create_user)
                 .json::<CreateUserRequest, UserResponse>()
                 .done()
-             .delete("/users/{id}", delete_user)
+                .delete("/users/{id}", delete_user)
                 .done()
         })
         .build();
@@ -494,7 +496,11 @@ fn group_with_multiple_methods() {
     assert_eq!(routes.len(), 3);
     for r in routes.routes() {
         assert!(r.auth, "all routes should have auth");
-        assert!(r.path.starts_with("/admin/"), "path should have prefix: got {}", r.path);
+        assert!(
+            r.path.starts_with("/admin/"),
+            "path should have prefix: got {}",
+            r.path
+        );
         assert_eq!(r.group.as_deref(), Some("admin"));
     }
 }

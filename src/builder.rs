@@ -7,26 +7,20 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use axfetchum::ApiRouter;
+//! use axotyped::ApiRouter;
 //!
-//! // Handler names auto-convert to camelCase client methods.
-//! // list_users → listUsers, create_user → createUser
+//! // Manual type specification (still supported):
 //! let (router, routes) = ApiRouter::<AppState>::new()
-//!     .group("users")
 //!     .get("/users", list_users)
 //!         .response::<Vec<UserResponse>>()
 //!         .auth()
 //!         .done()
-//!     .post("/users", create_user)
-//!         .json::<CreateUserRequest, UserResponse>()
+//!     .build();
+//!
+//! // Auto-inferred types via #[endpoint] + register!():
+//! let (router, routes) = ApiRouter::<AppState>::new()
+//!     .get("/users", register!(list_users))
 //!         .auth()
-//!         .done()
-//!     .get("/users/{id}", get_user)
-//!         .response::<UserResponse>()
-//!         .as_("getById")  // override auto-name when needed
-//!     .ws("/ws", ws_upgrade)           // dedicated WS builder
-//!         .query::<WsParams>()
-//!         .events::<ClientEvent, ServerEvent>()
 //!         .done()
 //!     .build();
 //! ```
@@ -36,7 +30,6 @@ use axum::handler::Handler;
 use axum::routing::{self, MethodRouter};
 
 use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
-use crate::EndpointMeta;
 
 // ---------------------------------------------------------------------------
 // Type collection helper
@@ -714,10 +707,6 @@ mod tests {
     }
 
     // -- default_name_from_handler --
-
-    fn dummy_list_users() {}
-    fn dummy_forgot_password() {}
-    fn dummy_register() {}
 
     #[test]
     fn default_name_list_users() {

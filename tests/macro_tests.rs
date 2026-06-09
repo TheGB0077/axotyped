@@ -1,4 +1,4 @@
-use axfetchum::{HttpMethod, api_routes};
+use axotyped::{HttpMethod, api_routes};
 
 #[test]
 fn simple_get_route() {
