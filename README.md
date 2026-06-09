@@ -202,39 +202,43 @@ ApiRouter::<AppState>::new()
 
 ## Generating the client
 
-Generation runs at build time — call it from `main.rs` or a `#[test]` after your routes are defined.
+Generation needs your compiled route functions, so we need to configure the setup to run after compile-time.
+
+**There are two common patterns:**
+
+**From `main.rs`** — gated behind a CLI flag for debug builds:
 
 ```rust
-use axotyped::GeneratorConfig;
-
-fn config() -> GeneratorConfig {
-    GeneratorConfig {
-        bindings_dir: "./bindings".into(),
-        output_path: "./packages/client/src/generated.ts".into(),
-        factory_name: "createApiClient".into(),
-        error_class_name: "ApiError".into(),
-        options_interface_name: "ApiClientOptions".into(),
-        type_import_prefix: "./bindings".into(),
-        format_command: Some("bun biome check --write --unsafe".into()),
-        ..Default::default()
-    }
-}
-
-// Export ts-rs type files, then generate the client:
-fn generate_ts_client(routes: &axotyped::RouteCollection) {
-    use axotyped::GeneratorConfig;
-
-    let bindings_dir = std::path::Path::new("./bindings");
+// In main.rs, debug builds only:
+#[cfg(debug_assertions)]
+if args.generate_bindings {
+    let routes = routes::route_collection();
     routes.export_types(&bindings_dir).unwrap();
-    axotyped::generate_to_file(routes, &config()).unwrap();
+    axotyped::generate_to_file(&routes, &config()).unwrap();
+}
+```
+
+**From a `#[test]`** — regenerate on demand:
+
+```rust
+#[test]
+fn generate_ts_client() {
+    let routes = my_app::routes();
+    routes.export_types(std::path::Path::new("./bindings")).unwrap();
+    axotyped::generate_to_file(&routes, &config()).unwrap();
 }
 
 // CI check — fails if the committed file is stale:
-fn check_ts_client(routes: &axotyped::RouteCollection) {
-    axotyped::check(routes, &config())
+#[test]
+fn check_ts_client() {
+    let routes = my_app::routes();
+    axotyped::check(&routes, &config())
         .expect("Generated TypeScript client is out of date!");
 }
 ```
+
+Local: `cargo test generate_ts_client` to regenerate.
+CI: `cargo test check_ts_client` fails if the committed file is stale.
 
 ## GeneratorConfig
 
