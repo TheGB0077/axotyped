@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "macros"]
+resolver = "3"
+
 [package]
 name = "axfetchum"
 version = "0.1.4"
@@ -11,10 +15,13 @@ publish = true
 
 [features]
 default = []
-axum = ["dep:axum"]
+axum = ["dep:axum", "dep:axfetchum-macros"]
+ts-rs = ["dep:ts-rs"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
+axfetchum-macros = { path = "macros", optional = true }
+ts-rs = { git = "https://github.com/TheGB0077/ts-rs.git", branch = "fork", optional = true, features = ["serde-json-impl", "companion-crate"] }
 
 [dev-dependencies]
 axum = "0.8"

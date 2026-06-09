@@ -100,7 +100,14 @@ const PRIMITIVES: &[&str] = &[
     "f64", "usize", "isize",
 ];
 
+/// Rust stdlib container types that don't need TS imports.
+/// Only Vec and Option realistically appear as wire types — they're handled
+/// by converting to TS equivalents (Vec → T[], Option → T | null).
+/// Others are listed for completeness but won't appear in practice.
+const CONTAINERS: &[&str] = &["Vec", "Option"];
+
 /// Recursively strip `Vec<>`/`Option<>` wrappers, returning the innermost type name.
+#[cfg(test)]
 fn unwrap_inner(rust_type: &str) -> &str {
     let t = rust_type.trim();
     if let Some(inner) = t
@@ -136,14 +143,80 @@ fn is_primitive_type(rust_type: &str) -> bool {
     PRIMITIVES.contains(&unwrap_inner(rust_type))
 }
 
-/// Get the base custom type name for imports (unwrapping Vec/Option, skipping primitives).
-fn base_type_name(rust_type: &str) -> Option<&str> {
-    let base = unwrap_inner(rust_type);
-    if PRIMITIVES.contains(&base) {
-        None
-    } else {
-        Some(base)
+/// Extract all custom type names from a type string for import generation.
+///
+/// Handles generics, Vec, Option, and nested types:
+/// - `ContentResponse<Dialog>` → `["ContentResponse", "Dialog"]`
+/// - `Vec<UserResponse>` → `["UserResponse"]`
+/// - `Option<ContentResponse<Dialog>>` → `["ContentResponse", "Dialog"]`
+/// - `String` → `[]` (primitive)
+fn extract_type_names(rust_type: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    collect_type_names(rust_type, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn collect_type_names<'a>(t: &'a str, out: &mut Vec<&'a str>) {
+    let t = t.trim();
+
+    // Strip Vec<>/Option<> wrappers — recurse into inner type only
+    if let Some(inner) = t
+        .strip_prefix("Vec<")
+        .or_else(|| t.strip_prefix("Option<"))
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        collect_type_names(inner, out);
+        return;
     }
+
+    // Check for generic: Name<Inner1, Inner2, ...>
+    if let Some(inner) = t.strip_suffix('>').and_then(|s| s.split_once('<')) {
+        let (name, params) = inner;
+        let name = name.trim();
+        // Skip Rust stdlib containers (Vec, Option, Result, etc.)
+        if !PRIMITIVES.contains(&name) && !CONTAINERS.contains(&name) {
+            out.push(name);
+        }
+        // Recurse into each generic parameter, splitting on commas
+        // while respecting angle bracket nesting depth.
+        for param in split_generic_params(params) {
+            collect_type_names(param, out);
+        }
+        return;
+    }
+
+    // Plain type
+    if !PRIMITIVES.contains(&t) && !CONTAINERS.contains(&t) {
+        out.push(t);
+    }
+}
+
+/// Split generic parameters on commas, respecting `<`/`>` nesting.
+///
+/// `"ContentResponse<Dialog>, ApiError"` → `["ContentResponse<Dialog>", " ApiError"]`
+/// `"A<B, C>, D"` → `["A<B, C>", " D"]`
+fn split_generic_params(params: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+
+    for (i, ch) in params.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(&params[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < params.len() {
+        result.push(&params[start..]);
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -181,11 +254,15 @@ fn compute_import_prefix(config: &GeneratorConfig) -> String {
 
     let ups = out_parts.len() - common;
     let mut prefix = if ups == 0 {
-        "./".to_string()
+        ".".to_string()
     } else {
         "../".repeat(ups)
     };
-    prefix.push_str(&bind_parts[common..].join("/"));
+    let suffix = bind_parts[common..].join("/");
+    if !suffix.is_empty() {
+        prefix.push('/');
+        prefix.push_str(&suffix);
+    }
     prefix
 }
 
@@ -336,6 +413,34 @@ const REQUEST_HELPER: &str = r#"function createRequest(options: __OPTS__) {
 }
 "#;
 
+const TYPED_WS_INTERFACE: &str = r#"export interface TypedWebSocket<TSend, TReceive> {
+  send(event: TSend): void;
+  onOpen(handler: () => void): void;
+  onMessage(handler: (event: TReceive) => void): void;
+  onError(handler: (event: Event) => void): void;
+  onClose(handler: (event: CloseEvent) => void): void;
+  close(code?: number, reason?: string): void;
+  readonly readyState: number;
+}
+"#;
+
+const TYPED_WS_HELPER: &str = r#"function createTypedWebSocket<TSend, TReceive>(ws: WebSocket): TypedWebSocket<TSend, TReceive> {
+  return {
+    send(event: TSend) { ws.send(JSON.stringify(event)); },
+    onOpen(handler: () => void) { ws.addEventListener("open", handler); },
+    onMessage(handler: (event: TReceive) => void) {
+      ws.addEventListener("message", (raw: MessageEvent) => {
+        handler(JSON.parse(raw.data as string) as TReceive);
+      });
+    },
+    onError(handler: (event: Event) => void) { ws.addEventListener("error", handler); },
+    onClose(handler: (event: CloseEvent) => void) { ws.addEventListener("close", handler); },
+    close(code?: number, reason?: string) { ws.close(code, reason); },
+    get readyState() { return ws.readyState; },
+  };
+}
+"#;
+
 // ---------------------------------------------------------------------------
 // Code generation
 // ---------------------------------------------------------------------------
@@ -348,7 +453,10 @@ pub fn generate(routes: &RouteCollection, config: &GeneratorConfig) -> String {
     w!(out, "// Auto-generated by axfetchum. Do not edit.");
     w!(out);
 
-    // Collect and emit type imports (single pass, no intermediate collection)
+    // Collect types used in route signatures so we can import them.
+    // The bindings directory also has a barrel index.ts (generated by
+    // export_types) that re-exports every ts-rs generated type including
+    // transitive dependencies.
     let import_prefix = compute_import_prefix(config);
     let custom_types: BTreeSet<&str> = routes
         .iter()
@@ -357,10 +465,12 @@ pub fn generate(routes: &RouteCollection, config: &GeneratorConfig) -> String {
                 r.body_type.as_deref(),
                 r.response_type.as_deref(),
                 r.query_type.as_deref(),
+                r.ws_send_type.as_deref(),
+                r.ws_receive_type.as_deref(),
             ]
         })
         .flatten()
-        .filter_map(base_type_name)
+        .flat_map(extract_type_names)
         .collect();
 
     for type_name in &custom_types {
@@ -372,6 +482,11 @@ pub fn generate(routes: &RouteCollection, config: &GeneratorConfig) -> String {
     if !custom_types.is_empty() {
         w!(out);
     }
+
+    // Re-export all types from the bindings barrel so consumers can
+    // import any generated type (including transitive deps like DialogLine)
+    // directly from "@tutor-api".
+    w!(out, "export type * from \"{import_prefix}\";");
 
     // Static blocks via template substitution
     let error_name = &config.error_class_name;
@@ -393,6 +508,15 @@ pub fn generate(routes: &RouteCollection, config: &GeneratorConfig) -> String {
     w!(out);
     out.push_str(&substitute(REQUEST_HELPER));
     w!(out);
+
+    // Typed WebSocket helpers — only if any WS route exists
+    let has_ws = routes.iter().any(|r| r.websocket);
+    if has_ws {
+        out.push_str(TYPED_WS_INTERFACE);
+        w!(out);
+        out.push_str(TYPED_WS_HELPER);
+        w!(out);
+    }
 
     // Factory function
     let factory = &config.factory_name;
@@ -464,7 +588,9 @@ fn generate_flat_routes(out: &mut String, routes: &RouteCollection) {
 
 /// Generate a single route method.
 fn generate_route_method(out: &mut String, route: &RouteDefinition, indent: usize) {
-    if route.redirect {
+    if route.websocket {
+        generate_ws_method(out, route, indent);
+    } else if route.redirect {
         generate_redirect_method(out, route, indent);
     } else {
         let name = &route.name;
@@ -551,6 +677,83 @@ fn derive_type_name(factory_name: &str) -> String {
         .strip_prefix("create")
         .unwrap_or(factory_name)
         .to_string()
+}
+
+/// Generate a WebSocket route method.
+///
+/// When send/receive types are defined, produces a TypeScript factory that
+/// returns a `TypedWebSocket<S, R>` with typed `send()` and `onMessage()`.
+/// Otherwise produces a bare `new WebSocket(url)`.
+fn generate_ws_method(out: &mut String, route: &RouteDefinition, indent: usize) {
+    let name = &route.name;
+    let path_template = build_path_template(&route.path);
+    let path_inner = &path_template[1..path_template.len() - 1];
+    let pad = " ".repeat(indent);
+    let pad2 = " ".repeat(indent + 2);
+    let pad4 = " ".repeat(indent + 4);
+
+    // Build function parameters: path params + optional query
+    let mut fn_params = Vec::new();
+    for param in &route.path_params {
+        fn_params.push(format!("{}: string", param.name));
+    }
+    if let Some(ref query_type) = route.query_type {
+        fn_params.push(format!("query?: {}", rust_type_to_ts(query_type)));
+    }
+    let all_params = fn_params.join(", ");
+
+    // Determine return type
+    let has_types = route.ws_send_type.is_some() && route.ws_receive_type.is_some();
+    let return_type = if has_types {
+        let send_ts = rust_type_to_ts(route.ws_send_type.as_ref().unwrap());
+        let recv_ts = rust_type_to_ts(route.ws_receive_type.as_ref().unwrap());
+        format!("TypedWebSocket<{}, {}>", send_ts, recv_ts)
+    } else {
+        "WebSocket".into()
+    };
+
+    w!(out, "{name}: ({all_params}): {return_type} => {{");
+
+    // Convert http(s) to ws(s)
+    w!(
+        out,
+        "{pad2}const baseUrl = options.baseUrl.replace(/^http/, (m) => m === \"https\" ? \"wss\" : \"ws\");"
+    );
+
+    // Build path with params
+    w!(out, "{pad2}let url = `${{baseUrl}}{path_inner}`;");
+
+    // Append query params if present
+    if route.query_type.is_some() {
+        w!(out, "{pad2}if (query) {{");
+        w!(out, "{pad4}const params = new URLSearchParams();");
+        w!(
+            out,
+            "{pad4}for (const [key, value] of Object.entries(query)) {{"
+        );
+        w!(
+            out,
+            "{pad4}  if (value !== undefined && value !== null) params.set(key, String(value));"
+        );
+        w!(out, "{pad4}}}");
+        w!(out, "{pad4}const qs = params.toString();");
+        w!(out, "{pad4}if (qs) url += `?${{qs}}`;");
+        w!(out, "{pad2}}}");
+    }
+
+    if has_types {
+        w!(out, "{pad2}const ws = new WebSocket(url);");
+        let send_ts = rust_type_to_ts(route.ws_send_type.as_ref().unwrap());
+        let recv_ts = rust_type_to_ts(route.ws_receive_type.as_ref().unwrap());
+        w!(
+            out,
+            "{pad2}return createTypedWebSocket<{send_ts}, {recv_ts}>(ws);"
+        );
+    } else {
+        w!(out, "{pad2}return new WebSocket(url);");
+    }
+
+    write!(out, "{pad}}}").unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -741,12 +944,62 @@ mod tests {
     }
 
     #[test]
-    fn test_base_type_name() {
-        assert_eq!(base_type_name("String"), None);
-        assert_eq!(base_type_name("RegisterRequest"), Some("RegisterRequest"));
-        assert_eq!(base_type_name("Vec<UserResponse>"), Some("UserResponse"));
-        assert_eq!(base_type_name("Vec<String>"), None);
-        assert_eq!(base_type_name("Option<UserResponse>"), Some("UserResponse"));
+    fn test_extract_type_names_primitive() {
+        assert!(extract_type_names("String").is_empty());
+        assert!(extract_type_names("bool").is_empty());
+        assert!(extract_type_names("u32").is_empty());
+    }
+
+    #[test]
+    fn test_extract_type_names_plain() {
+        assert_eq!(
+            extract_type_names("RegisterRequest"),
+            vec!["RegisterRequest"]
+        );
+    }
+
+    #[test]
+    fn test_extract_type_names_vec() {
+        assert_eq!(
+            extract_type_names("Vec<UserResponse>"),
+            vec!["UserResponse"]
+        );
+        assert!(extract_type_names("Vec<String>").is_empty());
+    }
+
+    #[test]
+    fn test_extract_type_names_option() {
+        assert_eq!(
+            extract_type_names("Option<UserResponse>"),
+            vec!["UserResponse"]
+        );
+    }
+
+    #[test]
+    fn test_extract_type_names_generic() {
+        let mut names = extract_type_names("ContentResponse<Dialog>");
+        names.sort();
+        assert_eq!(names, vec!["ContentResponse", "Dialog"]);
+    }
+
+    #[test]
+    fn test_extract_type_names_nested_generic() {
+        let mut names = extract_type_names("Vec<ContentResponse<Dialog>>");
+        names.sort();
+        assert_eq!(names, vec!["ContentResponse", "Dialog"]);
+    }
+
+    #[test]
+    fn test_extract_type_names_generic_with_primitive() {
+        assert_eq!(extract_type_names("Pagination<String>"), vec!["Pagination"]);
+    }
+
+    #[test]
+    fn test_extract_type_names_nested_multi_param() {
+        // Custom multi-param generic: PaginatedResult<Vec<Item>, Meta>
+        let mut names = extract_type_names("PaginatedResult<Vec<Item>, Meta>");
+        names.sort();
+        assert_eq!(names, vec!["Item", "Meta", "PaginatedResult"]);
     }
 
     #[test]
