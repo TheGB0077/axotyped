@@ -36,6 +36,65 @@ use axum::handler::Handler;
 use axum::routing::{self, MethodRouter};
 
 use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
+use crate::EndpointMeta;
+
+// ---------------------------------------------------------------------------
+// Type collection helper
+// ---------------------------------------------------------------------------
+
+/// Trait bound for types that can be collected into the TypeRegistry.
+/// When `ts-rs` feature is enabled, this requires `ts_rs::TS`.
+/// When disabled, only requires `'static` (collection is a no-op).
+#[cfg(feature = "ts-rs")]
+pub trait MaybeTs: ts_rs::TS {}
+
+#[cfg(feature = "ts-rs")]
+impl<T: ts_rs::TS> MaybeTs for T {}
+
+#[cfg(not(feature = "ts-rs"))]
+pub trait MaybeTs: 'static {}
+
+#[cfg(not(feature = "ts-rs"))]
+impl<T: 'static> MaybeTs for T {}
+
+/// Register a type for TypeScript export. Deduplicates by TypeId.
+/// When the `ts-rs` feature is disabled, this is a no-op.
+pub fn collect_type<T: MaybeTs + 'static>(collection: &mut RouteCollection) {
+    #[cfg(feature = "ts-rs")]
+    collection.register_type::<T>();
+    #[cfg(not(feature = "ts-rs"))]
+    let _ = collection;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata sideband (thread-local)
+// ---------------------------------------------------------------------------
+
+/// Function pointer type for applying endpoint metadata.
+type MetaApplierFn = fn(&mut RouteDefinition, &mut RouteCollection);
+
+thread_local! {
+    /// Sideband for passing metadata from `register!()` to the builder methods.
+    ///
+    /// `register!()` sets this before the handler is passed to `.post()` etc.
+    /// The builder method reads and clears it after applying the metadata.
+    /// This avoids needing separate method overloads.
+    static PENDING_META: std::cell::RefCell<Option<MetaApplierFn>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+/// Set the pending metadata applier. Called by `register!()`.
+pub fn set_pending_meta(apply_fn: MetaApplierFn) {
+    PENDING_META.with(|m| {
+        *m.borrow_mut() = Some(apply_fn);
+    });
+}
+
+/// Take and clear the pending metadata applier. Called by the builder methods.
+fn take_pending_meta() -> Option<MetaApplierFn> {
+    PENDING_META.with(|m| m.borrow_mut().take())
+}
 
 // ---------------------------------------------------------------------------
 // String helpers
@@ -74,7 +133,7 @@ fn strip_module_paths(type_name: &str) -> String {
 }
 
 /// Get the stripped type name for a Rust type.
-fn type_string<T: 'static>() -> String {
+pub fn type_string<T: 'static>() -> String {
     strip_module_paths(std::any::type_name::<T>())
 }
 
@@ -131,6 +190,8 @@ where
     router: Router<S>,
     routes: RouteCollection,
     current_group: Option<String>,
+    current_prefix: Option<String>,
+    default_auth: bool,
 }
 
 impl<S> ApiRouter<S>
@@ -143,18 +204,88 @@ where
             router: Router::new(),
             routes: RouteCollection::new(),
             current_group: None,
+            current_prefix: None,
+            default_auth: false,
         }
     }
 
-    /// Set the group for all subsequent routes.
+    /// Set a URL prefix for all subsequent routes.
+    ///
+    /// Paths registered via `.post()`, `.get()`, etc. will have this prefix
+    /// prepended automatically. For example, `.set_prefix("/admin")` followed
+    /// by `.post("/course", ...)` registers `/admin/course`.
+    pub fn set_prefix(mut self, prefix: &str) -> Self {
+        self.current_prefix = Some(prefix.to_string());
+        self
+    }
+
+    /// Make all subsequent routes require authentication by default.
+    ///
+    /// The generated TypeScript client will include `auth: true` for every
+    /// route, causing the `Authorization: Bearer <token>` header to be sent.
+    /// Individual routes can still call `.auth()` (no-op if already set).
+    pub fn auth_all(mut self) -> Self {
+        self.default_auth = true;
+        self
+    }
+
+    /// Set the group for all subsequent routes (TS client namespace only).
+    ///
+    /// For the closure-based version with prefix and auth, see
+    /// [`group_with`](Self::group_with).
     pub fn group(mut self, name: &str) -> Self {
         self.current_group = Some(name.to_string());
         self
     }
 
-    /// Clear the current group.
+    /// Clear group, prefix, and default auth (for fluent `group()` usage).
     pub fn no_group(mut self) -> Self {
         self.current_group = None;
+        self.current_prefix = None;
+        self.default_auth = false;
+        self
+    }
+
+    /// Closure-based group: scoped prefix, auth, and TS namespace.
+    ///
+    /// Creates an isolated scope where all routes inherit the group's
+    /// prefix, auth setting, and TS client namespace. The group's config
+    /// does not leak to routes registered after the closure.
+    ///
+    /// The prefix defaults to `"/{name}"` but can be overridden with
+    /// `.set_prefix()` inside the closure.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// .group_with("admin", |g| {
+    ///     g.auth_all()
+    ///      .post("/course", create_course)
+    ///         .body::<CreateCourseRequest>()
+    ///         .response::<CourseRecord>()
+    ///         .done()
+    ///      .get("/course", list_courses)
+    ///         .response::<Vec<CourseRecord>>()
+    ///         .done()
+    /// })
+    /// ```
+    pub fn group_with<F>(mut self, name: &str, routes: F) -> Self
+    where
+        F: FnOnce(ApiRouter<S>) -> ApiRouter<S>,
+    {
+        let default_prefix = format!("/{}", name);
+        let inner = ApiRouter {
+            router: Router::new(),
+            routes: RouteCollection::new(),
+            current_group: Some(name.to_string()),
+            current_prefix: Some(default_prefix),
+            default_auth: false,
+        };
+
+        let inner = routes(inner);
+
+        self.router = self.router.merge(inner.router);
+        self.routes.extend(inner.routes);
         self
     }
 
@@ -173,13 +304,19 @@ where
     // --- Standard HTTP method helpers ---
 
     /// Add a GET route.
+    ///
+    /// If the handler was wrapped in `register!()`, body/response/query types are
+    /// auto-applied from the `#[endpoint]` metadata. Otherwise, use `.body()`,
+    /// `.response()`, etc. to specify types manually.
     pub fn get<H, T>(self, path: &str, handler: H) -> RouteBuilder<S>
     where
         H: Handler<T, S> + 'static,
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Get, routing::get(handler), name)
+        let mut builder = self.route(path, HttpMethod::Get, routing::get(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a POST route.
@@ -189,7 +326,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Post, routing::post(handler), name)
+        let mut builder = self.route(path, HttpMethod::Post, routing::post(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a PUT route.
@@ -199,7 +338,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Put, routing::put(handler), name)
+        let mut builder = self.route(path, HttpMethod::Put, routing::put(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a PATCH route.
@@ -209,7 +350,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Patch, routing::patch(handler), name)
+        let mut builder = self.route(path, HttpMethod::Patch, routing::patch(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a DELETE route.
@@ -219,7 +362,9 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.route(path, HttpMethod::Delete, routing::delete(handler), name)
+        let mut builder = self.route(path, HttpMethod::Delete, routing::delete(handler), name);
+        builder.apply_pending_meta();
+        builder
     }
 
     /// Add a WebSocket route.
@@ -233,12 +378,13 @@ where
         T: 'static,
     {
         let name = default_name_from_handler::<H>();
-        self.router = self.router.route(path, routing::get(handler));
+        let full_path = self.resolve_path(path);
+        self.router = self.router.route(&full_path, routing::get(handler));
         let def = RouteDefinition {
             name,
             method: HttpMethod::Get,
-            path: path.to_string(),
-            auth: false,
+            path: full_path,
+            auth: self.default_auth,
             body_type: None,
             response_type: None,
             query_type: None,
@@ -249,7 +395,15 @@ where
             ws_send_type: None,
             ws_receive_type: None,
         };
+
         WsRouteBuilder { parent: self, def }
+    }
+
+    fn resolve_path(&self, path: &str) -> String {
+        match &self.current_prefix {
+            Some(prefix) => format!("{}{}", prefix, path),
+            None => path.to_string(),
+        }
     }
 
     fn route(
@@ -259,12 +413,13 @@ where
         method_router: MethodRouter<S>,
         default_name: String,
     ) -> RouteBuilder<S> {
-        self.router = self.router.route(path, method_router);
+        let full_path = self.resolve_path(path);
+        self.router = self.router.route(&full_path, method_router);
         let def = RouteDefinition {
             name: default_name,
             method,
-            path: path.to_string(),
-            auth: false,
+            path: full_path,
+            auth: self.default_auth,
             body_type: None,
             response_type: None,
             query_type: None,
@@ -306,21 +461,32 @@ impl<S> RouteBuilder<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    /// Apply any pending metadata from `register!()`. Called internally by the
+    /// HTTP method helpers right after route registration.
+    fn apply_pending_meta(&mut self) {
+        if let Some(apply_fn) = take_pending_meta() {
+            apply_fn(&mut self.def, &mut self.parent.routes);
+        }
+    }
+
     /// Set the request body type.
-    pub fn body<T: 'static>(mut self) -> Self {
+    pub fn body<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.body_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
     /// Set the response type.
-    pub fn response<T: 'static>(mut self) -> Self {
+    pub fn response<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.response_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
     /// Set the query parameters type.
-    pub fn query<T: 'static>(mut self) -> Self {
+    pub fn query<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.query_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
@@ -332,9 +498,11 @@ where
     ///     .auth()
     ///     .done()
     /// ```
-    pub fn json<B: 'static, R: 'static>(mut self) -> Self {
+    pub fn json<B: MaybeTs + 'static, R: MaybeTs + 'static>(mut self) -> Self {
         self.def.body_type = Some(type_string::<B>());
         self.def.response_type = Some(type_string::<R>());
+        collect_type::<B>(&mut self.parent.routes);
+        collect_type::<R>(&mut self.parent.routes);
         self
     }
 
@@ -392,8 +560,9 @@ where
     S: Clone + Send + Sync + 'static,
 {
     /// Set the query parameters type.
-    pub fn query<T: 'static>(mut self) -> Self {
+    pub fn query<T: MaybeTs + 'static>(mut self) -> Self {
         self.def.query_type = Some(type_string::<T>());
+        collect_type::<T>(&mut self.parent.routes);
         self
     }
 
@@ -404,9 +573,11 @@ where
     ///
     /// Generates a TypeScript `TypedWebSocket<S, R>` wrapper with typed
     /// `send(event: S)` and `onMessage(handler: (event: R) => void)` methods.
-    pub fn events<Send: 'static, Receive: 'static>(mut self) -> Self {
+    pub fn events<Send: MaybeTs + 'static, Receive: MaybeTs + 'static>(mut self) -> Self {
         self.def.ws_send_type = Some(type_string::<Send>());
         self.def.ws_receive_type = Some(type_string::<Receive>());
+        collect_type::<Send>(&mut self.parent.routes);
+        collect_type::<Receive>(&mut self.parent.routes);
         self
     }
 

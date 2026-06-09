@@ -1,0 +1,14 @@
+[package]
+name = "axfetchum-macros"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Proc-macros for axfetchum route type inference"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+quote = "1"
+proc-macro2 = "1"
