@@ -15,12 +15,64 @@ publish = true
 
 [features]
 default = []
-ts-rs = ["dep:ts-rs"]
+
+# --- ts-rs core (required by all *-impl features) ---
+ts-rs = [
+    "axotyped-macros/ts-rs",
+    "dep:thiserror",
+    "dep:serde_json",
+]
+
+# --- ts-rs serde integration ---
+serde-compat = ["axotyped-macros/serde-compat"]
+no-serde-warnings = ["axotyped-macros/no-serde-warnings"]
+
+# --- ts-rs formatting ---
+format = ["dep:dprint-plugin-typescript"]
+
+# --- ts-rs type integrations (each implies ts-rs) ---
+chrono-impl = ["ts-rs", "dep:chrono"]
+bigdecimal-impl = ["ts-rs", "dep:bigdecimal"]
+uuid-impl = ["ts-rs", "dep:uuid"]
+bson-uuid-impl = ["ts-rs", "dep:bson"]
+bytes-impl = ["ts-rs", "dep:bytes"]
+url-impl = ["ts-rs", "dep:url"]
+semver-impl = ["ts-rs", "dep:semver"]
+smol_str-impl = ["ts-rs", "dep:smol_str"]
+indexmap-impl = ["ts-rs", "dep:indexmap"]
+ordered-float-impl = ["ts-rs", "dep:ordered-float"]
+serde-json-impl = ["ts-rs", "dep:serde_json"]
+tokio-impl = ["ts-rs", "dep:tokio"]
+jiff-impl = ["ts-rs", "dep:jiff"]
+arrayvec-impl = ["ts-rs", "dep:arrayvec"]
+heapless-impl = ["ts-rs", "dep:heapless"]
+astrolabe-impl = ["ts-rs", "dep:astrolabe"]
 
 [dependencies]
 axum = "0.8"
-axotyped-macros = { path = "macros" }
-ts-rs = { git = "https://github.com/TheGB0077/ts-rs.git", rev = "a139381a9e5d0c2848bf92aec6c65d2a9c96b433", optional = true, features = ["serde-json-impl", "companion-crate"] }
+axotyped-macros = { version = "0.2.0", path = "macros" }
+
+# ts-rs required deps
+thiserror = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
+
+# ts-rs optional integrations
+chrono = { version = "0.4", optional = true }
+bigdecimal = { version = ">= 0.0.13, < 0.5", features = ["serde"], optional = true }
+uuid = { version = "1", optional = true }
+bson = { version = "2", optional = true }
+bytes = { version = "1", optional = true }
+url = { version = "2", optional = true }
+semver = { version = "1", optional = true }
+smol_str = { version = "0.3", optional = true }
+indexmap = { version = "2", optional = true }
+ordered-float = { version = ">= 3, < 6", optional = true }
+tokio = { version = "1", features = ["sync"], optional = true }
+jiff = { version = "0.2", optional = true }
+arrayvec = { version = ">= 0.6, < 0.8", optional = true }
+heapless = { version = ">= 0.7, < 0.9", optional = true }
+astrolabe = { version = "0.5.4", optional = true }
+dprint-plugin-typescript = { version = "= 0.95", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

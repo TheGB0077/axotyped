@@ -7,16 +7,19 @@ use serde::{Deserialize, Serialize};
 struct AppState;
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
 struct CreateUserRequest {
     _name: String,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
 struct UserResponse {
     _id: String,
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
 struct ListQuery {
     _page: Option<u32>,
 }
@@ -255,16 +258,19 @@ fn builder_redirect() {
 #[test]
 fn builder_websocket_typed() {
     #[derive(Deserialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct WsParams {
         _token: String,
     }
 
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ClientEvent {
         _msg: String,
     }
 
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ServerEvent {
         _reply: String,
     }
@@ -291,11 +297,13 @@ fn builder_websocket_typed() {
 #[test]
 fn builder_websocket_with_path_params() {
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ClientEvent {
         _msg: String,
     }
 
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ServerEvent {
         _reply: String,
     }
@@ -319,11 +327,13 @@ fn builder_websocket_with_path_params() {
 #[test]
 fn builder_websocket_with_auth() {
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ClientEvent {
         _msg: String,
     }
 
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ServerEvent {
         _reply: String,
     }
@@ -345,11 +355,13 @@ fn builder_websocket_with_auth() {
 #[test]
 fn builder_websocket_custom_name() {
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ClientEvent {
         _msg: String,
     }
 
     #[derive(serde::Serialize)]
+    #[cfg_attr(feature = "ts-rs", derive(axotyped::TS))]
     struct ServerEvent {
         _reply: String,
     }
