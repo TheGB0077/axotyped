@@ -3,6 +3,17 @@
 //! - `#[endpoint]` — attribute on handler functions; extracts `Json<T>`, `Query<T>` from
 //!   the signature and generates a companion `__EndpointMeta` struct
 //! - `register!()` — call-site macro that wraps a handler path with its metadata
+//! - `#[derive(TS)]` — (behind `ts-rs` feature) generate TypeScript bindings from Rust types
+
+#[cfg(feature = "ts-rs")]
+mod ts;
+
+// TS derive macro — must reside in the crate root.
+#[cfg(feature = "ts-rs")]
+#[proc_macro_derive(TS, attributes(ts))]
+pub fn ts_derive(input: TokenStream) -> TokenStream {
+    ts::typescript(input)
+}
 
 use proc_macro::TokenStream;
 use quote::quote;

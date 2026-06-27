@@ -46,12 +46,16 @@ pub use builder::{ApiRouter, MaybeTs, RouteBuilder, WsRouteBuilder};
 // Re-export the #[endpoint] attribute macro and register!() call-site macro.
 pub use axotyped_macros::{endpoint, register};
 
-// Re-export ts-rs surface so consuming crates can use the derive macro and trait
-// without a direct ts-rs dependency. When the `companion-crate` feature is enabled
-// in ts-rs-macros, the derive macro generates code referencing `::axotyped` paths,
-// so all ts-rs types must be accessible through this crate.
+// ts-rs integration: TS trait, derive macro, and all standard type impls.
+// Gated behind the `ts-rs` feature. The derive macro lives in axotyped-macros
+// and generates code referencing `::axotyped` paths.
 #[cfg(feature = "ts-rs")]
-pub use ts_rs::*;
+mod ts;
+
+// Re-export all ts-rs types so generated code can reference them as
+// `::axotyped::TS`, `::axotyped::Config`, etc.
+#[cfg(feature = "ts-rs")]
+pub use ts::*;
 
 // ---------------------------------------------------------------------------
 // EndpointMeta — trait for auto-inferred route type metadata

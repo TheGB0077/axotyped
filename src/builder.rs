@@ -36,13 +36,13 @@ use crate::types::{HttpMethod, RouteCollection, RouteDefinition};
 // ---------------------------------------------------------------------------
 
 /// Trait bound for types that can be collected into the TypeRegistry.
-/// When `ts-rs` feature is enabled, this requires `ts_rs::TS`.
+/// When `ts-rs` feature is enabled, this requires `crate::ts::TS`.
 /// When disabled, only requires `'static` (collection is a no-op).
 #[cfg(feature = "ts-rs")]
-pub trait MaybeTs: ts_rs::TS {}
+pub trait MaybeTs: crate::ts::TS {}
 
 #[cfg(feature = "ts-rs")]
-impl<T: ts_rs::TS> MaybeTs for T {}
+impl<T: crate::ts::TS> MaybeTs for T {}
 
 #[cfg(not(feature = "ts-rs"))]
 pub trait MaybeTs: 'static {}

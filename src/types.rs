@@ -70,7 +70,7 @@ pub struct RouteDefinition {
 /// A type-erased `T::export_all(&cfg)` function pointer.
 /// Used to call ts-rs's export mechanism for types discovered during route building.
 #[cfg(feature = "ts-rs")]
-type ExportFn = fn(&ts_rs::Config) -> Result<(), ts_rs::ExportError>;
+type ExportFn = fn(&crate::ts::Config) -> Result<(), crate::ts::ExportError>;
 
 /// Collects types encountered during route building so their TypeScript
 /// declarations can be exported via ts-rs's `export_all()` mechanism.
@@ -104,7 +104,7 @@ impl TypeRegistry {
     /// Skips container wrappers (`Vec<T>`, `Option<T>`) since they can't be
     /// exported as standalone ts-rs types. The inner `T` is registered
     /// separately through its own route registration.
-    pub fn register<T: ts_rs::TS + 'static>(&mut self) {
+    pub fn register<T: crate::ts::TS + 'static>(&mut self) {
         let type_name = std::any::type_name::<T>();
         if is_container_wrapper(type_name) {
             return;
@@ -196,7 +196,7 @@ impl RouteCollection {
 
     /// Register a type for TypeScript export. Deduplicates by TypeId.
     #[cfg(feature = "ts-rs")]
-    pub fn register_type<T: ts_rs::TS + 'static>(&mut self) {
+    pub fn register_type<T: crate::ts::TS + 'static>(&mut self) {
         self.types.register::<T>();
     }
 
@@ -218,7 +218,7 @@ impl RouteCollection {
         }
 
         fs::create_dir_all(dir)?;
-        let cfg = ts_rs::Config::new().with_out_dir(dir.to_path_buf());
+        let cfg = crate::ts::Config::new().with_out_dir(dir.to_path_buf());
 
         for (_, export_fn) in self.types.slots() {
             if let Err(e) = export_fn(&cfg) {

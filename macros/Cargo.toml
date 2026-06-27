@@ -1,6 +1,6 @@
 [package]
 name = "axotyped-macros"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Proc-macros for axotyped route type inference"
@@ -8,7 +8,14 @@ description = "Proc-macros for axotyped route type inference"
 [lib]
 proc-macro = true
 
+[features]
+ts-rs = ["dep:indexmap"]
+serde-compat = ["ts-rs", "dep:termcolor"]
+no-serde-warnings = []
+
 [dependencies]
-syn = { version = "2", features = ["full", "parsing", "printing"] }
+syn = { version = "2", features = ["full", "parsing", "printing", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+indexmap = { version = "2", optional = true }
+termcolor = { version = "1", optional = true }
